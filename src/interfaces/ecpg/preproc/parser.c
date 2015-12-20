@@ -21,7 +21,6 @@
 #include "extern.h"
 #include "preproc.h"
 
-
 static bool have_lookahead;		/* is lookahead info valid? */
 static int	lookahead_token;	/* one-token lookahead */
 static YYSTYPE lookahead_yylval;	/* yylval for lookahead token */

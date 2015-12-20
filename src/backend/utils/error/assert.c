@@ -16,6 +16,7 @@
  *-------------------------------------------------------------------------
  */
 #include "postgres.h"
+#include "back_trace.h"
 
 #include <unistd.h>
 
@@ -38,6 +39,9 @@ ExceptionalCondition(const char *conditionName,
 					 errorType, conditionName,
 					 fileName, lineNumber);
 	}
+
+	/* dump the thread stack to help identify root cause */
+	back_trace();
 
 	/* Usually this shouldn't be needed, but make sure the msg went out */
 	fflush(stderr);
