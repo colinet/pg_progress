@@ -34,7 +34,7 @@ if (-e "src/tools/msvc/buildenv.pl")
 
 my $what = shift || "";
 if ($what =~
-/^(check|installcheck|plcheck|contribcheck|modulescheck|ecpgcheck|isolationcheck|upgradecheck|bincheck)$/i
+/^(check|installcheck|plcheck|contribcheck|modulescheck|ecpgcheck|isolationcheck|upgradecheck|bincheck|recoverycheck)$/i
   )
 {
 	$what = uc $what;
@@ -89,6 +89,7 @@ my %command = (
 	MODULESCHECK   => \&modulescheck,
 	ISOLATIONCHECK => \&isolationcheck,
 	BINCHECK       => \&bincheck,
+	RECOVERYCHECK  => \&recoverycheck,
 	UPGRADECHECK   => \&upgradecheck,);
 
 my $proc = $command{$what};
@@ -360,6 +361,16 @@ sub modulescheck
 	exit $mstat if $mstat;
 }
 
+sub recoverycheck
+{
+	InstallTemp();
+
+	my $mstat = 0;
+	my $dir = "$topdir/src/test/recovery";
+	my $status = tap_check($dir);
+	exit $status if $status;
+}
+
 # Run "initdb", then reconfigure authentication.
 sub standard_initdb
 {
@@ -536,7 +547,20 @@ sub InstallTemp
 sub usage
 {
 	print STDERR
-	  "Usage: vcregress.pl ",
-"<check|installcheck|plcheck|contribcheck|isolationcheck|ecpgcheck|upgradecheck> [schedule]\n";
+		"Usage: vcregress.pl <mode> [ <schedule> ]\n\n",
+		"Options for <mode>:\n",
+		"  bincheck       run tests of utilities in src/bin/\n",
+		"  check          deploy instance and run regression tests on it\n",
+		"  contribcheck   run tests of modules in contrib/\n",
+		"  ecpgcheck      run regression tests of ECPG\n",
+		"  installcheck   run regression tests on existing instance\n",
+		"  isolationcheck run isolation tests\n",
+		"  modulescheck   run tests of modules in src/test/modules/\n",
+		"  plcheck        run tests of PL languages\n",
+		"  recoverycheck  run recovery test suite\n",
+		"  upgradecheck   run tests of pg_upgrade\n",
+		"\nOptions for <schedule>:\n",
+		"  serial         serial mode\n",
+		"  parallel       parallel mode\n";
 	exit(1);
 }

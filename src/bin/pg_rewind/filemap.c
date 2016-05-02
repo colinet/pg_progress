@@ -3,7 +3,7 @@
  * filemap.c
  *	  A data structure for keeping track of files that have changed.
  *
- * Copyright (c) 2013-2015, PostgreSQL Global Development Group
+ * Copyright (c) 2013-2016, PostgreSQL Global Development Group
  *
  *-------------------------------------------------------------------------
  */
@@ -531,7 +531,11 @@ print_filemap(void)
 		if (entry->action != FILE_ACTION_NONE ||
 			entry->pagemap.bitmapsize > 0)
 		{
-			printf("%s (%s)\n", entry->path, action_to_str(entry->action));
+			pg_log(PG_DEBUG,
+			/*------
+			   translator: first %s is a file path, second is a keyword such as COPY */
+				   "%s (%s)\n", entry->path,
+				   action_to_str(entry->action));
 
 			if (entry->pagemap.bitmapsize > 0)
 				datapagemap_print(&entry->pagemap);

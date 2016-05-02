@@ -506,25 +506,25 @@ CREATE [ [ GLOBAL | LOCAL ] { TEMPORARY | TEMP } | UNLOGGED ] TABLE [ IF NOT EXI
     <term><literal>PRIMARY KEY ( <replaceable class="PARAMETER">column_name</replaceable> [, ... ] )</> (table constraint)</term>
     <listitem>
      <para>
-      The primary key constraint specifies that a column or columns of a table
-      can contain only unique (non-duplicate), nonnull values.
-      Technically, <literal>PRIMARY KEY</literal> is merely a
-      combination of <literal>UNIQUE</> and <literal>NOT NULL</>, but
-      identifying a set of columns as primary key also provides
-      metadata about the design of the schema, as a primary key
-      implies that other tables
-      can rely on this set of columns as a unique identifier for rows.
-     </para>
-
-     <para>
-      Only one primary key can be specified for a table, whether as a
+      The <literal>PRIMARY KEY</> constraint specifies that a column or
+      columns of a table can contain only unique (non-duplicate), nonnull
+      values. Only one primary key can be specified for a table, whether as a
       column constraint or a table constraint.
      </para>
 
      <para>
       The primary key constraint should name a set of columns that is
-      different from other sets of columns named by any unique
-      constraint defined for the same table.
+      different from the set of columns named by any unique
+      constraint defined for the same table.  (Otherwise, the unique
+      constraint is redundant and will be discarded.)
+     </para>
+
+     <para>
+      <literal>PRIMARY KEY</literal> enforces the same data constraints as
+      a combination of <literal>UNIQUE</> and <literal>NOT NULL</>, but
+      identifying a set of columns as the primary key also provides metadata
+      about the design of the schema, since a primary key implies that other
+      tables can rely on this set of columns as a unique identifier for rows.
      </para>
     </listitem>
    </varlistentry>
@@ -904,6 +904,19 @@ CREATE [ [ GLOBAL | LOCAL ] { TEMPORARY | TEMP } | UNLOGGED ] TABLE [ IF NOT EXI
       For a table whose entries are never updated, complete packing is the
       best choice, but in heavily updated tables smaller fillfactors are
       appropriate.  This parameter cannot be set for TOAST tables.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><literal>parallel_degree</> (<type>integer</>)</term>
+    <listitem>
+     <para>
+      The parallel degree for a table is the number of workers that should
+      be used to assist a parallel scan of that table.  If not set, the
+      system will determine a value based on the relation size.  The actual
+      number of workers chosen by the planner may be less, for example due to
+      the setting of <xref linkend="guc-max-parallel-degree">.
      </para>
     </listitem>
    </varlistentry>

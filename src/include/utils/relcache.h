@@ -4,7 +4,7 @@
  *	  Relation descriptor cache definitions.
  *
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/utils/relcache.h
@@ -38,6 +38,7 @@ extern void RelationClose(Relation relation);
  * Routines to compute/retrieve additional cached information
  */
 extern List *RelationGetIndexList(Relation relation);
+extern List *RelationGetFKeyList(Relation relation);
 extern Oid	RelationGetOidIndex(Relation relation);
 extern Oid	RelationGetReplicaIndex(Relation relation);
 extern List *RelationGetIndexExpressions(Relation relation);

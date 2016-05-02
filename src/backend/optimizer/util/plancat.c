@@ -4,7 +4,7 @@
  *	   routines for accessing the system catalogs
  *
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -27,6 +27,8 @@
 #include "catalog/catalog.h"
 #include "catalog/dependency.h"
 #include "catalog/heap.h"
+#include "catalog/pg_am.h"
+#include "catalog/pg_constraint.h"
 #include "foreign/fdwapi.h"
 #include "miscadmin.h"
 #include "nodes/makefuncs.h"
@@ -40,6 +42,7 @@
 #include "rewrite/rewriteManip.h"
 #include "storage/bufmgr.h"
 #include "utils/lsyscache.h"
+#include "utils/syscache.h"
 #include "utils/rel.h"
 #include "utils/snapmgr.h"
 
@@ -93,6 +96,9 @@ get_relation_info(PlannerInfo *root, Oid relationObjectId, bool inhparent,
 	Relation	relation;
 	bool		hasindex;
 	List	   *indexinfos = NIL;
+	List	   *fkinfos = NIL;
+	List	   *fkoidlist;
+	ListCell   *l;
 
 	/*
 	 * We need not lock the relation since it was already locked, either by
@@ -127,6 +133,9 @@ get_relation_info(PlannerInfo *root, Oid relationObjectId, bool inhparent,
 		estimate_rel_size(relation, rel->attr_widths - rel->min_attr,
 						  &rel->pages, &rel->tuples, &rel->allvisfrac);
 
+	/* Retrive the parallel_degree reloption, if set. */
+	rel->rel_parallel_degree = RelationGetParallelDegree(relation, -1);
+
 	/*
 	 * Make list of indexes.  Ignore indexes on system catalogs if told to.
 	 * Don't bother with indexes for an inheritance parent, either.
@@ -140,7 +149,6 @@ get_relation_info(PlannerInfo *root, Oid relationObjectId, bool inhparent,
 	if (hasindex)
 	{
 		List	   *indexoidlist;
-		ListCell   *l;
 		LOCKMODE	lmode;
 
 		indexoidlist = RelationGetIndexList(relation);
@@ -163,6 +171,7 @@ get_relation_info(PlannerInfo *root, Oid relationObjectId, bool inhparent,
 			Oid			indexoid = lfirst_oid(l);
 			Relation	indexRelation;
 			Form_pg_index index;
+			IndexAmRoutine *amroutine;
 			IndexOptInfo *info;
 			int			ncolumns;
 			int			i;
@@ -223,13 +232,17 @@ get_relation_info(PlannerInfo *root, Oid relationObjectId, bool inhparent,
 			}
 
 			info->relam = indexRelation->rd_rel->relam;
-			info->amcostestimate = indexRelation->rd_am->amcostestimate;
-			info->amcanorderbyop = indexRelation->rd_am->amcanorderbyop;
-			info->amoptionalkey = indexRelation->rd_am->amoptionalkey;
-			info->amsearcharray = indexRelation->rd_am->amsearcharray;
-			info->amsearchnulls = indexRelation->rd_am->amsearchnulls;
-			info->amhasgettuple = OidIsValid(indexRelation->rd_am->amgettuple);
-			info->amhasgetbitmap = OidIsValid(indexRelation->rd_am->amgetbitmap);
+
+			/* We copy just the fields we need, not all of rd_amroutine */
+			amroutine = indexRelation->rd_amroutine;
+			info->amcanorderbyop = amroutine->amcanorderbyop;
+			info->amoptionalkey = amroutine->amoptionalkey;
+			info->amsearcharray = amroutine->amsearcharray;
+			info->amsearchnulls = amroutine->amsearchnulls;
+			info->amhasgettuple = (amroutine->amgettuple != NULL);
+			info->amhasgetbitmap = (amroutine->amgetbitmap != NULL);
+			info->amcostestimate = amroutine->amcostestimate;
+			Assert(info->amcostestimate != NULL);
 
 			/*
 			 * Fetch the ordering information for the index, if any.
@@ -240,7 +253,7 @@ get_relation_info(PlannerInfo *root, Oid relationObjectId, bool inhparent,
 				 * If it's a btree index, we can use its opfamily OIDs
 				 * directly as the sort ordering opfamily OIDs.
 				 */
-				Assert(indexRelation->rd_am->amcanorder);
+				Assert(amroutine->amcanorder);
 
 				info->sortopfamily = info->opfamily;
 				info->reverse_sort = (bool *) palloc(sizeof(bool) * ncolumns);
@@ -254,7 +267,7 @@ get_relation_info(PlannerInfo *root, Oid relationObjectId, bool inhparent,
 					info->nulls_first[i] = (opt & INDOPTION_NULLS_FIRST) != 0;
 				}
 			}
-			else if (indexRelation->rd_am->amcanorder)
+			else if (amroutine->amcanorder)
 			{
 				/*
 				 * Otherwise, identify the corresponding btree opfamilies by
@@ -333,7 +346,8 @@ get_relation_info(PlannerInfo *root, Oid relationObjectId, bool inhparent,
 			/* Build targetlist using the completed indexprs data */
 			info->indextlist = build_index_tlist(root, info, relation);
 
-			info->predOK = false;		/* set later in indxpath.c */
+			info->indrestrictinfo = NIL;		/* set later, in indxpath.c */
+			info->predOK = false;		/* set later, in indxpath.c */
 			info->unique = index->indisunique;
 			info->immediate = index->indimmediate;
 			info->hypothetical = false;
@@ -380,6 +394,85 @@ get_relation_info(PlannerInfo *root, Oid relationObjectId, bool inhparent,
 	}
 
 	rel->indexlist = indexinfos;
+
+	/*
+	 * Load foreign key data. Note this is the definitional data from the
+	 * catalog only and does not lock the referenced tables here. The
+	 * precise definition of the FK is important and may affect the usage
+	 * elsewhere in the planner, e.g. if the constraint is deferred or
+	 * if the constraint is not valid then relying upon this in the executor
+	 * may not be accurate, though might be considered a useful estimate for
+	 * planning purposes.
+	 */
+	fkoidlist = RelationGetFKeyList(relation);
+
+	foreach(l, fkoidlist)
+	{
+		Oid			fkoid = lfirst_oid(l);
+		HeapTuple	htup;
+		Form_pg_constraint constraint;
+		ForeignKeyOptInfo *info;
+		Datum		adatum;
+		bool		isnull;
+		ArrayType  *arr;
+		int			numkeys;
+		int			i;
+
+		htup = SearchSysCache1(CONSTROID, ObjectIdGetDatum(fkoid));
+		if (!HeapTupleIsValid(htup)) /* should not happen */
+			elog(ERROR, "cache lookup failed for constraint %u", fkoid);
+		constraint = (Form_pg_constraint) GETSTRUCT(htup);
+
+		Assert(constraint->contype == CONSTRAINT_FOREIGN);
+
+		info = makeNode(ForeignKeyOptInfo);
+
+		info->conrelid = constraint->conrelid;
+		info->confrelid = constraint->confrelid;
+
+		/* conkey */
+		adatum = SysCacheGetAttr(CONSTROID, htup,
+									Anum_pg_constraint_conkey, &isnull);
+		Assert(!isnull);
+
+		arr = DatumGetArrayTypeP(adatum);
+		numkeys = ARR_DIMS(arr)[0];
+		info->conkeys = (int*)palloc(numkeys * sizeof(int));
+		for (i = 0; i < numkeys; i++)
+			info->conkeys[i] = ((int16 *) ARR_DATA_PTR(arr))[i];
+
+		/* confkey */
+		adatum = SysCacheGetAttr(CONSTROID, htup,
+									Anum_pg_constraint_confkey, &isnull);
+		Assert(!isnull);
+
+		arr = DatumGetArrayTypeP(adatum);
+		Assert(numkeys == ARR_DIMS(arr)[0]);
+		info->confkeys = (int*)palloc(numkeys * sizeof(int));
+		for (i = 0; i < numkeys; i++)
+			info->confkeys[i] = ((int16 *) ARR_DATA_PTR(arr))[i];
+
+		/* conpfeqop */
+		adatum = SysCacheGetAttr(CONSTROID, htup,
+									Anum_pg_constraint_conpfeqop, &isnull);
+		Assert(!isnull);
+
+		arr = DatumGetArrayTypeP(adatum);
+		Assert(numkeys == ARR_DIMS(arr)[0]);
+		info->conpfeqop = (Oid*)palloc(numkeys * sizeof(Oid));
+		for (i = 0; i < numkeys; i++)
+			info->conpfeqop[i] = ((Oid *) ARR_DATA_PTR(arr))[i];
+
+		info->nkeys = numkeys;
+
+		ReleaseSysCache(htup);
+
+		fkinfos = lappend(fkinfos, info);
+	}
+
+	list_free(fkoidlist);
+
+	rel->fkeylist = fkinfos;
 
 	/* Grab foreign-table info using the relcache, while we have it */
 	if (relation->rd_rel->relkind == RELKIND_FOREIGN_TABLE)
@@ -1136,7 +1229,27 @@ relation_excluded_by_constraints(PlannerInfo *root,
 	List	   *safe_constraints;
 	ListCell   *lc;
 
-	/* Skip the test if constraint exclusion is disabled for the rel */
+	/*
+	 * Regardless of the setting of constraint_exclusion, detect
+	 * constant-FALSE-or-NULL restriction clauses.  Because const-folding will
+	 * reduce "anything AND FALSE" to just "FALSE", any such case should
+	 * result in exactly one baserestrictinfo entry.  This doesn't fire very
+	 * often, but it seems cheap enough to be worth doing anyway.  (Without
+	 * this, we'd miss some optimizations that 9.5 and earlier found via much
+	 * more roundabout methods.)
+	 */
+	if (list_length(rel->baserestrictinfo) == 1)
+	{
+		RestrictInfo *rinfo = (RestrictInfo *) linitial(rel->baserestrictinfo);
+		Expr	   *clause = rinfo->clause;
+
+		if (clause && IsA(clause, Const) &&
+			(((Const *) clause)->constisnull ||
+			 !DatumGetBool(((Const *) clause)->constvalue)))
+			return true;
+	}
+
+	/* Skip further tests if constraint exclusion is disabled for the rel */
 	if (constraint_exclusion == CONSTRAINT_EXCLUSION_OFF ||
 		(constraint_exclusion == CONSTRAINT_EXCLUSION_PARTITION &&
 		 !(rel->reloptkind == RELOPT_OTHER_MEMBER_REL ||
@@ -1513,4 +1626,51 @@ has_unique_index(RelOptInfo *rel, AttrNumber attno)
 			return true;
 	}
 	return false;
+}
+
+
+/*
+ * has_row_triggers
+ *
+ * Detect whether the specified relation has any row-level triggers for event.
+ */
+bool
+has_row_triggers(PlannerInfo *root, Index rti, CmdType event)
+{
+	RangeTblEntry *rte = planner_rt_fetch(rti, root);
+	Relation	relation;
+	TriggerDesc *trigDesc;
+	bool		result = false;
+
+	/* Assume we already have adequate lock */
+	relation = heap_open(rte->relid, NoLock);
+
+	trigDesc = relation->trigdesc;
+	switch (event)
+	{
+		case CMD_INSERT:
+			if (trigDesc &&
+				(trigDesc->trig_insert_after_row ||
+				 trigDesc->trig_insert_before_row))
+				result = true;
+			break;
+		case CMD_UPDATE:
+			if (trigDesc &&
+				(trigDesc->trig_update_after_row ||
+				 trigDesc->trig_update_before_row))
+				result = true;
+			break;
+		case CMD_DELETE:
+			if (trigDesc &&
+				(trigDesc->trig_delete_after_row ||
+				 trigDesc->trig_delete_before_row))
+				result = true;
+			break;
+		default:
+			elog(ERROR, "unrecognized CmdType: %d", (int) event);
+			break;
+	}
+
+	heap_close(relation, NoLock);
+	return result;
 }

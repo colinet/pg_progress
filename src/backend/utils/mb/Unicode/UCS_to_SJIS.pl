@@ -1,6 +1,6 @@
 #! /usr/bin/perl
 #
-# Copyright (c) 2001-2015, PostgreSQL Global Development Group
+# Copyright (c) 2001-2016, PostgreSQL Global Development Group
 #
 # src/backend/utils/mb/Unicode/UCS_to_SJIS.pl
 #
@@ -55,7 +55,7 @@ while (<FILE>)
 				&& ($code <= 0x879c)))
 		{
 			printf STDERR
-			  "Warning: duplicate UTF8 : UCS=0x%04x  SJIS=0x%04x\n", $ucs,
+			  "Warning: duplicate UTF8: UCS=0x%04x SJIS=0x%04x\n", $ucs,
 			  $code;
 			next;
 		}
@@ -65,10 +65,6 @@ while (<FILE>)
 }
 
 close(FILE);
-
-#
-# first, generate UTF8 --> SJIS table
-#
 
 $file = "utf8_to_sjis.map";
 open(FILE, "> $file") || die("cannot open $file");

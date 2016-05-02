@@ -3,7 +3,7 @@
  * policy.c
  *	  Commands for manipulating policies.
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/backend/commands/policy.c
@@ -176,8 +176,13 @@ policy_role_list_to_array(List *roles, int *num_roles)
 			return role_oids;
 		}
 		else
+		{
+			/* Additional check to protect reserved role names */
+			check_rolespec_name((Node *) spec,
+							"Cannot specify reserved role as policy target");
 			role_oids[i++] =
 				ObjectIdGetDatum(get_rolespec_oid((Node *) spec, false));
+		}
 	}
 
 	return role_oids;
@@ -370,7 +375,10 @@ RemovePolicyById(Oid policy_id)
 		elog(ERROR, "could not find tuple for policy %u", policy_id);
 
 	/*
-	 * Open and exclusive-lock the relation the policy belong to.
+	 * Open and exclusive-lock the relation the policy belongs to.  (We need
+	 * exclusive lock to lock out queries that might otherwise depend on the
+	 * set of policies the rel has; furthermore we've got to hold the lock
+	 * till commit.)
 	 */
 	relid = ((Form_pg_policy) GETSTRUCT(tuple))->polrelid;
 
@@ -390,7 +398,6 @@ RemovePolicyById(Oid policy_id)
 	simple_heap_delete(pg_policy_rel, &tuple->t_self);
 
 	systable_endscan(sscan);
-	heap_close(rel, AccessExclusiveLock);
 
 	/*
 	 * Note that, unlike some of the other flags in pg_class, relrowsecurity
@@ -400,8 +407,9 @@ RemovePolicyById(Oid policy_id)
 	 * policy is created and all records are filtered (except for queries from
 	 * the owner).
 	 */
-
 	CacheInvalidateRelcache(rel);
+
+	heap_close(rel, NoLock);
 
 	/* Clean up */
 	heap_close(pg_policy_rel, RowExclusiveLock);
@@ -657,7 +665,9 @@ RemoveRoleFromObjectPolicy(Oid roleid, Oid classid, Oid policy_id)
 
 	/* Clean up. */
 	systable_endscan(sscan);
-	relation_close(rel, AccessExclusiveLock);
+
+	relation_close(rel, NoLock);
+
 	heap_close(pg_policy_rel, RowExclusiveLock);
 
 	return(noperm || num_roles > 0);
@@ -734,7 +744,7 @@ CreatePolicy(CreatePolicyStmt *stmt)
 										RangeVarCallbackForPolicy,
 										(void *) stmt);
 
-	/* Open target_table to build quals. No lock is necessary. */
+	/* Open target_table to build quals. No additional lock is necessary. */
 	target_table = relation_open(table_id, NoLock);
 
 	/* Add for the regular security quals */
@@ -1076,7 +1086,7 @@ AlterPolicy(AlterPolicyStmt *stmt)
 		if (!attr_isnull)
 		{
 			char	   *qual_value;
-			ParseState *qual_pstate = make_parsestate(NULL);
+			ParseState *qual_pstate;
 
 			/* parsestate is built just to build the range table */
 			qual_pstate = make_parsestate(NULL);
@@ -1117,7 +1127,7 @@ AlterPolicy(AlterPolicyStmt *stmt)
 		if (!attr_isnull)
 		{
 			char	   *with_check_value;
-			ParseState *with_check_pstate = make_parsestate(NULL);
+			ParseState *with_check_pstate;
 
 			/* parsestate is built just to build the range table */
 			with_check_pstate = make_parsestate(NULL);

@@ -6,7 +6,7 @@
  * with servers of versions 7.4 and up.  It's okay to omit irrelevant
  * information for an old server, but not to fail outright.
  *
- * Copyright (c) 2000-2015, PostgreSQL Global Development Group
+ * Copyright (c) 2000-2016, PostgreSQL Global Development Group
  *
  * src/bin/psql/describe.c
  */
@@ -15,12 +15,12 @@
 #include <ctype.h>
 
 #include "catalog/pg_default_acl.h"
+#include "fe_utils/string_utils.h"
 
 #include "common.h"
 #include "describe.h"
-#include "dumputils.h"
-#include "mbprint.h"
-#include "print.h"
+#include "fe_utils/mbprint.h"
+#include "fe_utils/print.h"
 #include "settings.h"
 #include "variables.h"
 
@@ -2063,16 +2063,16 @@ describeOneTableDetails(const char *schemaname,
 				printTableAddFooter(&cont, _("Policies:"));
 
 			if (tableinfo.rowsecurity && tableinfo.forcerowsecurity && tuples > 0)
-				printTableAddFooter(&cont, _("Policies (Forced Row Security Enabled):"));
+				printTableAddFooter(&cont, _("Policies (forced row security enabled):"));
 
 			if (tableinfo.rowsecurity && !tableinfo.forcerowsecurity && tuples == 0)
-				printTableAddFooter(&cont, _("Policies (Row Security Enabled): (None)"));
+				printTableAddFooter(&cont, _("Policies (row security enabled): (none)"));
 
 			if (tableinfo.rowsecurity && tableinfo.forcerowsecurity && tuples == 0)
-				printTableAddFooter(&cont, _("Policies (Forced Row Security Enabled): (None)"));
+				printTableAddFooter(&cont, _("Policies (forced row security enabled): (none)"));
 
 			if (!tableinfo.rowsecurity && tuples > 0)
-				printTableAddFooter(&cont, _("Policies (Row Security Disabled):"));
+				printTableAddFooter(&cont, _("Policies (row security disabled):"));
 
 			/* Might be an empty set - that's ok */
 			for (i = 0; i < tuples; i++)
@@ -2646,7 +2646,7 @@ add_tablespace_footer(printTableContent *const cont, char relkind,
  * Describes roles.  Any schema portion of the pattern is ignored.
  */
 bool
-describeRoles(const char *pattern, bool verbose)
+describeRoles(const char *pattern, bool verbose, bool showSystem)
 {
 	PQExpBufferData buf;
 	PGresult   *res;
@@ -2690,6 +2690,9 @@ describeRoles(const char *pattern, bool verbose)
 		}
 
 		appendPQExpBufferStr(&buf, "\nFROM pg_catalog.pg_roles r\n");
+
+		if (!showSystem && !pattern)
+			appendPQExpBufferStr(&buf, "WHERE r.rolname !~ '^pg_'\n");
 
 		processSQLNamePattern(pset.db, &buf, pattern, false, false,
 							  NULL, "r.rolname", NULL, NULL);
@@ -4412,7 +4415,8 @@ listForeignTables(const char *pattern, bool verbose)
 							 "d.objoid = c.oid AND d.objsubid = 0\n");
 
 	processSQLNamePattern(pset.db, &buf, pattern, false, false,
-						  NULL, "n.nspname", "c.relname", NULL);
+						  "n.nspname", "c.relname", NULL,
+						  "pg_catalog.pg_table_is_visible(c.oid)");
 
 	appendPQExpBufferStr(&buf, "ORDER BY 1, 2;");
 

@@ -10,7 +10,7 @@
  * It doesn't matter whether the bits are on spinning rust or some other
  * storage technology.
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -165,9 +165,14 @@ static CycleCtr mdckpt_cycle_ctr = 0;
 
 typedef enum					/* behavior for mdopen & _mdfd_getseg */
 {
-	EXTENSION_FAIL,				/* ereport if segment not present */
-	EXTENSION_RETURN_NULL,		/* return NULL if not present */
-	EXTENSION_CREATE			/* create new segments as needed */
+	/* ereport if segment not present, create in recovery */
+	EXTENSION_FAIL,
+	/* return NULL if not present, create in recovery */
+	EXTENSION_RETURN_NULL,
+	/* return NULL if not present */
+	EXTENSION_REALLY_RETURN_NULL,
+	/* create new segments as needed */
+	EXTENSION_CREATE
 } ExtensionBehavior;
 
 /* local routines */
@@ -591,7 +596,8 @@ mdopen(SMgrRelation reln, ForkNumber forknum, ExtensionBehavior behavior)
 			fd = PathNameOpenFile(path, O_RDWR | O_CREAT | O_EXCL | PG_BINARY, 0600);
 		if (fd < 0)
 		{
-			if (behavior == EXTENSION_RETURN_NULL &&
+			if ((behavior == EXTENSION_RETURN_NULL ||
+				 behavior == EXTENSION_REALLY_RETURN_NULL) &&
 				FILE_POSSIBLY_DELETED(errno))
 			{
 				pfree(path);
@@ -662,6 +668,57 @@ mdprefetch(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum)
 #endif   /* USE_PREFETCH */
 }
 
+/*
+ * mdwriteback() -- Tell the kernel to write pages back to storage.
+ *
+ * This accepts a range of blocks because flushing several pages at once is
+ * considerably more efficient than doing so individually.
+ */
+void
+mdwriteback(SMgrRelation reln, ForkNumber forknum,
+			BlockNumber blocknum, BlockNumber nblocks)
+{
+	/*
+	 * Issue flush requests in as few requests as possible; have to split at
+	 * segment boundaries though, since those are actually separate files.
+	 */
+	while (nblocks > 0)
+	{
+		BlockNumber nflush = nblocks;
+		off_t		seekpos;
+		MdfdVec    *v;
+		int			segnum_start,
+					segnum_end;
+
+		v = _mdfd_getseg(reln, forknum, blocknum, false,
+						 EXTENSION_REALLY_RETURN_NULL);
+
+		/*
+		 * We might be flushing buffers of already removed relations, that's
+		 * ok, just ignore that case.
+		 */
+		if (!v)
+			return;
+
+		/* compute offset inside the current segment */
+		segnum_start = blocknum / RELSEG_SIZE;
+
+		/* compute number of desired writes within the current segment */
+		segnum_end = (blocknum + nblocks - 1) / RELSEG_SIZE;
+		if (segnum_start != segnum_end)
+			nflush = RELSEG_SIZE - (blocknum % ((BlockNumber) RELSEG_SIZE));
+
+		Assert(nflush >= 1);
+		Assert(nflush <= nblocks);
+
+		seekpos = (off_t) BLCKSZ *(blocknum % ((BlockNumber) RELSEG_SIZE));
+
+		FileWriteback(v->mdfd_vfd, seekpos, (off_t) BLCKSZ * nflush);
+
+		nblocks -= nflush;
+		blocknum += nflush;
+	}
+}
 
 /*
  *	mdread() -- Read the specified block from a relation.
@@ -851,7 +908,7 @@ mdnblocks(SMgrRelation reln, ForkNumber forknum)
 			 * We used to pass O_CREAT here, but that's has the disadvantage
 			 * that it might create a segment which has vanished through some
 			 * operating system misadventure.  In such a case, creating the
-			 * segment here undermine _mdfd_getseg's attempts to notice and
+			 * segment here undermines _mdfd_getseg's attempts to notice and
 			 * report an error upon access to a missing segment.
 			 */
 			v->mdfd_chain = _mdfd_openseg(reln, forknum, segno, 0);
@@ -1723,7 +1780,7 @@ _mdfd_getseg(SMgrRelation reln, ForkNumber forknum, BlockNumber blkno,
 	BlockNumber nextsegno;
 
 	if (!v)
-		return NULL;			/* only possible if EXTENSION_RETURN_NULL */
+		return NULL;			/* if EXTENSION_(REALLY_)RETURN_NULL */
 
 	targetseg = blkno / ((BlockNumber) RELSEG_SIZE);
 	for (nextsegno = 1; nextsegno <= targetseg; nextsegno++)
@@ -1732,23 +1789,34 @@ _mdfd_getseg(SMgrRelation reln, ForkNumber forknum, BlockNumber blkno,
 
 		if (v->mdfd_chain == NULL)
 		{
-			/*
-			 * Normally we will create new segments only if authorized by the
-			 * caller (i.e., we are doing mdextend()).  But when doing WAL
-			 * recovery, create segments anyway; this allows cases such as
-			 * replaying WAL data that has a write into a high-numbered
-			 * segment of a relation that was later deleted.  We want to go
-			 * ahead and create the segments so we can finish out the replay.
-			 *
-			 * We have to maintain the invariant that segments before the last
-			 * active segment are of size RELSEG_SIZE; therefore, pad them out
-			 * with zeroes if needed.  (This only matters if caller is
-			 * extending the relation discontiguously, but that can happen in
-			 * hash indexes.)
-			 */
-			if (behavior == EXTENSION_CREATE || InRecovery)
+			BlockNumber nblocks = _mdnblocks(reln, forknum, v);
+			int			flags = 0;
+
+			if (nblocks > ((BlockNumber) RELSEG_SIZE))
+				elog(FATAL, "segment too big");
+
+			if (behavior == EXTENSION_CREATE ||
+				(InRecovery && behavior != EXTENSION_REALLY_RETURN_NULL))
 			{
-				if (_mdnblocks(reln, forknum, v) < RELSEG_SIZE)
+				/*
+				 * Normally we will create new segments only if authorized by
+				 * the caller (i.e., we are doing mdextend()).  But when doing
+				 * WAL recovery, create segments anyway; this allows cases
+				 * such as replaying WAL data that has a write into a
+				 * high-numbered segment of a relation that was later deleted.
+				 * We want to go ahead and create the segments so we can
+				 * finish out the replay.  However if the caller has specified
+				 * EXTENSION_REALLY_RETURN_NULL, then extension is not desired
+				 * even in recovery; we won't reach this point in that case.
+				 *
+				 * We have to maintain the invariant that segments before the
+				 * last active segment are of size RELSEG_SIZE; therefore, if
+				 * extending, pad them out with zeroes if needed.  (This only
+				 * matters if in recovery, or if the caller is extending the
+				 * relation discontiguously, but that can happen in hash
+				 * indexes.)
+				 */
+				if (nblocks < ((BlockNumber) RELSEG_SIZE))
 				{
 					char	   *zerobuf = palloc0(BLCKSZ);
 
@@ -1757,16 +1825,41 @@ _mdfd_getseg(SMgrRelation reln, ForkNumber forknum, BlockNumber blkno,
 							 zerobuf, skipFsync);
 					pfree(zerobuf);
 				}
-				v->mdfd_chain = _mdfd_openseg(reln, forknum, +nextsegno, O_CREAT);
+				flags = O_CREAT;
 			}
-			else
+			else if (nblocks < ((BlockNumber) RELSEG_SIZE))
 			{
-				/* We won't create segment if not existent */
-				v->mdfd_chain = _mdfd_openseg(reln, forknum, nextsegno, 0);
+				/*
+				 * When not extending, only open the next segment if the
+				 * current one is exactly RELSEG_SIZE.  If not (this branch),
+				 * either return NULL or fail.
+				 */
+				if (behavior == EXTENSION_RETURN_NULL ||
+					behavior == EXTENSION_REALLY_RETURN_NULL)
+				{
+					/*
+					 * Some callers discern between reasons for _mdfd_getseg()
+					 * returning NULL based on errno. As there's no failing
+					 * syscall involved in this case, explicitly set errno to
+					 * ENOENT, as that seems the closest interpretation.
+					 */
+					errno = ENOENT;
+					return NULL;
+				}
+
+				ereport(ERROR,
+						(errcode_for_file_access(),
+						 errmsg("could not open file \"%s\" (target block %u): previous segment is only %u blocks",
+								_mdfd_segpath(reln, forknum, nextsegno),
+								blkno, nblocks)));
 			}
+
+			v->mdfd_chain = _mdfd_openseg(reln, forknum, nextsegno, flags);
+
 			if (v->mdfd_chain == NULL)
 			{
-				if (behavior == EXTENSION_RETURN_NULL &&
+				if ((behavior == EXTENSION_RETURN_NULL ||
+					 behavior == EXTENSION_REALLY_RETURN_NULL) &&
 					FILE_POSSIBLY_DELETED(errno))
 					return NULL;
 				ereport(ERROR,

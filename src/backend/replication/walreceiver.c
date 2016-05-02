@@ -33,7 +33,7 @@
  * specific parts are in the libpqwalreceiver module. It's loaded
  * dynamically to avoid linking the server with libpq.
  *
- * Portions Copyright (c) 2010-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2010-2016, PostgreSQL Global Development Group
  *
  *
  * IDENTIFICATION
@@ -46,9 +46,12 @@
 #include <signal.h>
 #include <unistd.h>
 
+#include "access/htup_details.h"
 #include "access/timeline.h"
 #include "access/transam.h"
 #include "access/xlog_internal.h"
+#include "catalog/pg_type.h"
+#include "funcapi.h"
 #include "libpq/pqformat.h"
 #include "libpq/pqsignal.h"
 #include "miscadmin.h"
@@ -57,7 +60,9 @@
 #include "storage/ipc.h"
 #include "storage/pmsignal.h"
 #include "storage/procarray.h"
+#include "utils/builtins.h"
 #include "utils/guc.h"
+#include "utils/pg_lsn.h"
 #include "utils/ps_status.h"
 #include "utils/resowner.h"
 #include "utils/timestamp.h"
@@ -347,8 +352,6 @@ WalReceiverMain(void)
 		if (walrcv_startstreaming(startpointTLI, startpoint,
 								  slotname[0] != '\0' ? slotname : NULL))
 		{
-			bool		endofwal = false;
-
 			if (first_stream)
 				ereport(LOG,
 						(errmsg("started streaming WAL from primary at %X/%X on timeline %u",
@@ -371,18 +374,13 @@ WalReceiverMain(void)
 			ping_sent = false;
 
 			/* Loop until end-of-streaming or error */
-			while (!endofwal)
+			for (;;)
 			{
 				char	   *buf;
 				int			len;
-
-				/*
-				 * Emergency bailout if postmaster has died.  This is to avoid
-				 * the necessity for manual cleanup of all postmaster
-				 * children.
-				 */
-				if (!PostmasterIsAlive())
-					exit(1);
+				bool		endofwal = false;
+				pgsocket	wait_fd = PGINVALID_SOCKET;
+				int			rc;
 
 				/*
 				 * Exit walreceiver if we're not in recovery. This should not
@@ -402,8 +400,8 @@ WalReceiverMain(void)
 					XLogWalRcvSendHSFeedback(true);
 				}
 
-				/* Wait a while for data to arrive */
-				len = walrcv_receive(NAPTIME_PER_CYCLE, &buf);
+				/* See if we can read data immediately */
+				len = walrcv_receive(&buf, &wait_fd);
 				if (len != 0)
 				{
 					/*
@@ -434,7 +432,7 @@ WalReceiverMain(void)
 							endofwal = true;
 							break;
 						}
-						len = walrcv_receive(0, &buf);
+						len = walrcv_receive(&buf, &wait_fd);
 					}
 
 					/* Let the master know that we received some data. */
@@ -447,7 +445,54 @@ WalReceiverMain(void)
 					 */
 					XLogWalRcvFlush(false);
 				}
-				else
+
+				/* Check if we need to exit the streaming loop. */
+				if (endofwal)
+					break;
+
+				/*
+				 * Ideally we would reuse a WaitEventSet object repeatedly
+				 * here to avoid the overheads of WaitLatchOrSocket on epoll
+				 * systems, but we can't be sure that libpq (or any other
+				 * walreceiver implementation) has the same socket (even if
+				 * the fd is the same number, it may have been closed and
+				 * reopened since the last time).  In future, if there is a
+				 * function for removing sockets from WaitEventSet, then we
+				 * could add and remove just the socket each time, potentially
+				 * avoiding some system calls.
+				 */
+				Assert(wait_fd != PGINVALID_SOCKET);
+				rc = WaitLatchOrSocket(&walrcv->latch,
+									   WL_POSTMASTER_DEATH | WL_SOCKET_READABLE |
+									   WL_TIMEOUT | WL_LATCH_SET,
+									   wait_fd,
+									   NAPTIME_PER_CYCLE);
+				if (rc & WL_LATCH_SET)
+				{
+					ResetLatch(&walrcv->latch);
+					if (walrcv->force_reply)
+					{
+						/*
+						 * The recovery process has asked us to send apply
+						 * feedback now.  Make sure the flag is really set to
+						 * false in shared memory before sending the reply,
+						 * so we don't miss a new request for a reply.
+						 */
+						walrcv->force_reply = false;
+						pg_memory_barrier();
+						XLogWalRcvSendReply(true, false);
+					}
+				}
+				if (rc & WL_POSTMASTER_DEATH)
+				{
+					/*
+					 * Emergency bailout if postmaster has died.  This is to
+					 * avoid the necessity for manual cleanup of all
+					 * postmaster children.
+					 */
+					exit(1);
+				}
+				if (rc & WL_TIMEOUT)
 				{
 					/*
 					 * We didn't receive anything new. If we haven't heard
@@ -1214,4 +1259,168 @@ ProcessWalSndrMessage(XLogRecPtr walEnd, TimestampTz sendTime)
 		pfree(sendtime);
 		pfree(receipttime);
 	}
+}
+
+/*
+ * Wake up the walreceiver main loop.
+ *
+ * This is called by the startup process whenever interesting xlog records
+ * are applied, so that walreceiver can check if it needs to send an apply
+ * notification back to the master which may be waiting in a COMMIT with
+ * synchronous_commit = remote_apply.
+ */
+void
+WalRcvForceReply(void)
+{
+	WalRcv->force_reply = true;
+	SetLatch(&WalRcv->latch);
+}
+
+/*
+ * Return a string constant representing the state. This is used
+ * in system functions and views, and should *not* be translated.
+ */
+static const char *
+WalRcvGetStateString(WalRcvState state)
+{
+	switch (state)
+	{
+		case WALRCV_STOPPED:
+			return "stopped";
+		case WALRCV_STARTING:
+			return "starting";
+		case WALRCV_STREAMING:
+			return "streaming";
+		case WALRCV_WAITING:
+			return "waiting";
+		case WALRCV_RESTARTING:
+			return "restarting";
+		case WALRCV_STOPPING:
+			return "stopping";
+	}
+	return "UNKNOWN";
+}
+
+/*
+ * Returns activity of WAL receiver, including pid, state and xlog locations
+ * received from the WAL sender of another server.
+ */
+Datum
+pg_stat_get_wal_receiver(PG_FUNCTION_ARGS)
+{
+#define PG_STAT_GET_WAL_RECEIVER_COLS	11
+	TupleDesc	tupdesc;
+	Datum		values[PG_STAT_GET_WAL_RECEIVER_COLS];
+	bool		nulls[PG_STAT_GET_WAL_RECEIVER_COLS];
+	WalRcvData *walrcv = WalRcv;
+	WalRcvState state;
+	XLogRecPtr	receive_start_lsn;
+	TimeLineID	receive_start_tli;
+	XLogRecPtr	received_lsn;
+	TimeLineID	received_tli;
+	TimestampTz	last_send_time;
+	TimestampTz	last_receipt_time;
+	XLogRecPtr	latest_end_lsn;
+	TimestampTz	latest_end_time;
+	char	   *slotname;
+
+	/* No WAL receiver, just return a tuple with NULL values */
+	if (walrcv->pid == 0)
+		PG_RETURN_NULL();
+
+	/* Initialise values and NULL flags arrays */
+	MemSet(values, 0, sizeof(values));
+	MemSet(nulls, 0, sizeof(nulls));
+
+	/* Initialise attributes information in the tuple descriptor */
+	tupdesc = CreateTemplateTupleDesc(PG_STAT_GET_WAL_RECEIVER_COLS, false);
+	TupleDescInitEntry(tupdesc, (AttrNumber) 1, "pid",
+					   INT4OID, -1, 0);
+	TupleDescInitEntry(tupdesc, (AttrNumber) 2, "status",
+					   TEXTOID, -1, 0);
+	TupleDescInitEntry(tupdesc, (AttrNumber) 3, "receive_start_lsn",
+					   LSNOID, -1, 0);
+	TupleDescInitEntry(tupdesc, (AttrNumber) 4, "receive_start_tli",
+					   INT4OID, -1, 0);
+	TupleDescInitEntry(tupdesc, (AttrNumber) 5, "received_lsn",
+					   LSNOID, -1, 0);
+	TupleDescInitEntry(tupdesc, (AttrNumber) 6, "received_tli",
+					   INT4OID, -1, 0);
+	TupleDescInitEntry(tupdesc, (AttrNumber) 7, "last_msg_send_time",
+					   TIMESTAMPTZOID, -1, 0);
+	TupleDescInitEntry(tupdesc, (AttrNumber) 8, "last_msg_receipt_time",
+					   TIMESTAMPTZOID, -1, 0);
+	TupleDescInitEntry(tupdesc, (AttrNumber) 9, "latest_end_lsn",
+					   LSNOID, -1, 0);
+	TupleDescInitEntry(tupdesc, (AttrNumber) 10, "latest_end_time",
+					   TIMESTAMPTZOID, -1, 0);
+	TupleDescInitEntry(tupdesc, (AttrNumber) 11, "slot_name",
+					   TEXTOID, -1, 0);
+
+	BlessTupleDesc(tupdesc);
+
+	/* Take a lock to ensure value consistency */
+	SpinLockAcquire(&walrcv->mutex);
+	state = walrcv->walRcvState;
+	receive_start_lsn = walrcv->receiveStart;
+	receive_start_tli = walrcv->receiveStartTLI;
+	received_lsn = walrcv->receivedUpto;
+	received_tli = walrcv->receivedTLI;
+	last_send_time = walrcv->lastMsgSendTime;
+	last_receipt_time = walrcv->lastMsgReceiptTime;
+	latest_end_lsn = walrcv->latestWalEnd;
+	latest_end_time = walrcv->latestWalEndTime;
+	slotname = pstrdup(walrcv->slotname);
+	SpinLockRelease(&walrcv->mutex);
+
+	/* Fetch values */
+	values[0] = Int32GetDatum(walrcv->pid);
+
+	if (!superuser())
+	{
+		/*
+		 * Only superusers can see details. Other users only get the pid
+		 * value to know whether it is a WAL receiver, but no details.
+		 */
+		MemSet(&nulls[1], true, PG_STAT_GET_WAL_RECEIVER_COLS - 1);
+	}
+	else
+	{
+		values[1] = CStringGetTextDatum(WalRcvGetStateString(state));
+
+		if (XLogRecPtrIsInvalid(receive_start_lsn))
+			nulls[2] = true;
+		else
+			values[2] = LSNGetDatum(receive_start_lsn);
+		values[3] = Int32GetDatum(receive_start_tli);
+		if (XLogRecPtrIsInvalid(received_lsn))
+			nulls[4] = true;
+		else
+			values[4] = LSNGetDatum(received_lsn);
+		values[5] = Int32GetDatum(received_tli);
+		if (last_send_time == 0)
+			nulls[6] = true;
+		else
+			values[6] = TimestampTzGetDatum(last_send_time);
+		if (last_receipt_time == 0)
+			nulls[7] = true;
+		else
+			values[7] = TimestampTzGetDatum(last_receipt_time);
+		if (XLogRecPtrIsInvalid(latest_end_lsn))
+			nulls[8] = true;
+		else
+			values[8] = LSNGetDatum(latest_end_lsn);
+		if (latest_end_time == 0)
+			nulls[9] = true;
+		else
+			values[9] = TimestampTzGetDatum(latest_end_time);
+		if (*slotname == '\0')
+			nulls[10] = true;
+		else
+			values[10] = CStringGetTextDatum(slotname);
+	}
+
+	/* Returns the record as Datum */
+	PG_RETURN_DATUM(HeapTupleGetDatum(
+						  heap_form_tuple(tupdesc, values, nulls)));
 }

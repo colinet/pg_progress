@@ -4,7 +4,7 @@
  *	  Lightweight lock manager
  *
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/storage/lwlock.h
@@ -57,15 +57,11 @@ typedef struct LWLockTranche
  */
 typedef struct LWLock
 {
-	slock_t		mutex;			/* Protects LWLock and queue of PGPROCs */
 	uint16		tranche;		/* tranche ID */
-
 	pg_atomic_uint32 state;		/* state of exclusive/nonexclusive lockers */
-#ifdef LOCK_DEBUG
-	pg_atomic_uint32 nwaiters;	/* number of waiters */
-#endif
 	dlist_head	waiters;		/* list of waiting PGPROCs */
 #ifdef LOCK_DEBUG
+	pg_atomic_uint32 nwaiters;	/* number of waiters */
 	struct PGPROC *owner;		/* last exclusive owner of the lock */
 #endif
 } LWLock;
@@ -118,6 +114,16 @@ typedef union LWLockMinimallyPadded
 
 extern PGDLLIMPORT LWLockPadded *MainLWLockArray;
 extern char *MainLWLockNames[];
+
+/* struct for storing named tranche information */
+typedef struct NamedLWLockTranche
+{
+	LWLockTranche lwLockTranche;
+	int			trancheId;
+} NamedLWLockTranche;
+
+extern PGDLLIMPORT NamedLWLockTranche *NamedLWLockTrancheArray;
+extern PGDLLIMPORT int NamedLWLockTrancheRequests;
 
 /* Names for fixed lwlocks */
 #include "storage/lwlocknames.h"
@@ -177,14 +183,16 @@ extern Size LWLockShmemSize(void);
 extern void CreateLWLocks(void);
 extern void InitLWLockAccess(void);
 
+extern const char *GetLWLockIdentifier(uint8 classId, uint16 eventId);
+
 /*
- * The traditional method for obtaining an lwlock for use by an extension is
- * to call RequestAddinLWLocks() during postmaster startup; this will reserve
- * space for the indicated number of locks in MainLWLockArray.  Subsequently,
- * a lock can be allocated using LWLockAssign.
+ * Extensions (or core code) can obtain an LWLocks by calling
+ * RequestNamedLWLockTranche() during postmaster startup.  Subsequently,
+ * call GetNamedLWLockTranche() to obtain a pointer to an array containing
+ * the number of LWLocks requested.
  */
-extern void RequestAddinLWLocks(int n);
-extern LWLock *LWLockAssign(void);
+extern void RequestNamedLWLockTranche(const char *tranche_name, int num_lwlocks);
+extern LWLockPadded *GetNamedLWLockTranche(const char *tranche_name);
 
 /*
  * There is another, more flexible method of obtaining lwlocks. First, call
@@ -210,9 +218,22 @@ extern void LWLockInitialize(LWLock *lock, int tranche_id);
 typedef enum BuiltinTrancheIds
 {
 	LWTRANCHE_MAIN,
+	LWTRANCHE_CLOG_BUFFERS,
+	LWTRANCHE_COMMITTS_BUFFERS,
+	LWTRANCHE_SUBTRANS_BUFFERS,
+	LWTRANCHE_MXACTOFFSET_BUFFERS,
+	LWTRANCHE_MXACTMEMBER_BUFFERS,
+	LWTRANCHE_ASYNC_BUFFERS,
+	LWTRANCHE_OLDSERXID_BUFFERS,
 	LWTRANCHE_WAL_INSERT,
 	LWTRANCHE_BUFFER_CONTENT,
 	LWTRANCHE_BUFFER_IO_IN_PROGRESS,
+	LWTRANCHE_REPLICATION_ORIGIN,
+	LWTRANCHE_REPLICATION_SLOT_IO_IN_PROGRESS,
+	LWTRANCHE_PROC,
+	LWTRANCHE_BUFFER_MAPPING,
+	LWTRANCHE_LOCK_MANAGER,
+	LWTRANCHE_PREDICATE_LOCK_MANAGER,
 	LWTRANCHE_FIRST_USER_DEFINED
 }	BuiltinTrancheIds;
 

@@ -3,7 +3,7 @@
  * parse_func.c
  *		handle function calls in parser
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -647,7 +647,8 @@ ParseFuncOrColumn(ParseState *pstate, List *funcname, List *fargs,
 		Aggref	   *aggref = makeNode(Aggref);
 
 		aggref->aggfnoid = funcid;
-		aggref->aggtype = rettype;
+		/* default the outputtype to be the same as aggtype */
+		aggref->aggtype = aggref->aggoutputtype = rettype;
 		/* aggcollid and inputcollid will be set by parse_collate.c */
 		/* aggdirectargs and args will be set by transformAggregateCall */
 		/* aggorder and aggdistinct will be set by transformAggregateCall */

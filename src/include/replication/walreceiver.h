@@ -3,7 +3,7 @@
  * walreceiver.h
  *	  Exports from replication/walreceiverfuncs.c.
  *
- * Portions Copyright (c) 2010-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2010-2016, PostgreSQL Global Development Group
  *
  * src/include/replication/walreceiver.h
  *
@@ -14,6 +14,7 @@
 
 #include "access/xlog.h"
 #include "access/xlogdefs.h"
+#include "fmgr.h"
 #include "storage/latch.h"
 #include "storage/spin.h"
 #include "pgtime.h"
@@ -112,9 +113,16 @@ typedef struct
 	slock_t		mutex;			/* locks shared variables shown above */
 
 	/*
+	 * force walreceiver reply?  This doesn't need to be locked; memory
+	 * barriers for ordering are sufficient.
+	 */
+	bool		force_reply;
+
+	/*
 	 * Latch used by startup process to wake up walreceiver after telling it
 	 * where to start streaming (after setting receiveStart and
-	 * receiveStartTLI).
+	 * receiveStartTLI), and also to tell it to send apply feedback to the
+	 * primary whenever specially marked commit records are applied.
 	 */
 	Latch		latch;
 } WalRcvData;
@@ -137,7 +145,7 @@ extern PGDLLIMPORT walrcv_startstreaming_type walrcv_startstreaming;
 typedef void (*walrcv_endstreaming_type) (TimeLineID *next_tli);
 extern PGDLLIMPORT walrcv_endstreaming_type walrcv_endstreaming;
 
-typedef int (*walrcv_receive_type) (int timeout, char **buffer);
+typedef int (*walrcv_receive_type) (char **buffer, pgsocket *wait_fd);
 extern PGDLLIMPORT walrcv_receive_type walrcv_receive;
 
 typedef void (*walrcv_send_type) (const char *buffer, int nbytes);
@@ -148,6 +156,7 @@ extern PGDLLIMPORT walrcv_disconnect_type walrcv_disconnect;
 
 /* prototypes for functions in walreceiver.c */
 extern void WalReceiverMain(void) pg_attribute_noreturn();
+extern Datum pg_stat_get_wal_receiver(PG_FUNCTION_ARGS);
 
 /* prototypes for functions in walreceiverfuncs.c */
 extern Size WalRcvShmemSize(void);
@@ -160,5 +169,6 @@ extern void RequestXLogStreaming(TimeLineID tli, XLogRecPtr recptr,
 extern XLogRecPtr GetWalRcvWriteRecPtr(XLogRecPtr *latestChunkStart, TimeLineID *receiveTLI);
 extern int	GetReplicationApplyDelay(void);
 extern int	GetReplicationTransferLatency(void);
+extern void WalRcvForceReply(void);
 
 #endif   /* _WALRECEIVER_H */

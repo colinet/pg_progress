@@ -16,7 +16,8 @@
  * if it has one.  When (and if) the next demand for a cached plan occurs,
  * parse analysis and rewrite is repeated to build a new valid query tree,
  * and then planning is performed as normal.  We also force re-analysis and
- * re-planning if the active search_path is different from the previous time.
+ * re-planning if the active search_path is different from the previous time
+ * or, if RLS is involved, if the user changes or the RLS environment changes.
  *
  * Note that if the sinval was a result of user DDL actions, parse analysis
  * could throw an error, for example if a column referenced by the query is
@@ -37,7 +38,7 @@
  * be infrequent enough that more-detailed tracking is not worth the effort.
  *
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -104,6 +105,8 @@ static TupleDesc PlanCacheComputeResultDesc(List *stmt_list);
 static void PlanCacheRelCallback(Datum arg, Oid relid);
 static void PlanCacheFuncCallback(Datum arg, int cacheid, uint32 hashvalue);
 static void PlanCacheSysCallback(Datum arg, int cacheid, uint32 hashvalue);
+static void PlanCacheUserMappingCallback(Datum arg, int cacheid,
+										 uint32 hashvalue);
 
 
 /*
@@ -119,6 +122,8 @@ InitPlanCache(void)
 	CacheRegisterSyscacheCallback(NAMESPACEOID, PlanCacheSysCallback, (Datum) 0);
 	CacheRegisterSyscacheCallback(OPEROID, PlanCacheSysCallback, (Datum) 0);
 	CacheRegisterSyscacheCallback(AMOPOPID, PlanCacheSysCallback, (Datum) 0);
+	/* User mapping change may invalidate plans with pushed down foreign join */
+	CacheRegisterSyscacheCallback(USERMAPPINGOID, PlanCacheUserMappingCallback, (Datum) 0);
 }
 
 /*
@@ -204,8 +209,8 @@ CreateCachedPlan(Node *raw_parse_tree,
 	plansource->total_custom_cost = 0;
 	plansource->num_custom_plans = 0;
 	plansource->hasRowSecurity = false;
-	plansource->row_security_env = row_security;
 	plansource->planUserId = InvalidOid;
+	plansource->row_security_env = false;
 
 	MemoryContextSwitchTo(oldcxt);
 
@@ -271,6 +276,8 @@ CreateOneShotCachedPlan(Node *raw_parse_tree,
 	plansource->generic_cost = -1;
 	plansource->total_custom_cost = 0;
 	plansource->num_custom_plans = 0;
+	plansource->planUserId = InvalidOid;
+	plansource->row_security_env = false;
 
 	return plansource;
 }
@@ -409,6 +416,8 @@ CompleteCachedPlan(CachedPlanSource *plansource,
 	plansource->cursor_options = cursor_options;
 	plansource->fixed_result = fixed_result;
 	plansource->resultDesc = PlanCacheComputeResultDesc(querytree_list);
+	plansource->planUserId = GetUserId();
+	plansource->row_security_env = row_security;
 
 	MemoryContextSwitchTo(oldcxt);
 
@@ -572,23 +581,14 @@ RevalidateCachedQuery(CachedPlanSource *plansource)
 	}
 
 	/*
-	 * If this is a new cached plan, then set the user id it was planned by
-	 * and under what row security settings; these are needed to determine
-	 * plan invalidation when RLS is involved.
-	 */
-	if (!OidIsValid(plansource->planUserId))
-	{
-		plansource->planUserId = GetUserId();
-		plansource->row_security_env = row_security;
-	}
-
-	/*
 	 * If the query is currently valid, we should have a saved search_path ---
 	 * check to see if that matches the current environment.  If not, we want
-	 * to force replan.
+	 * to force replan.  We should also have a valid planUserId.
 	 */
 	if (plansource->is_valid)
 	{
+		Assert(OidIsValid(plansource->planUserId));
+
 		Assert(plansource->search_path != NULL);
 		if (!OverrideSearchPathMatchesCurrent(plansource->search_path))
 		{
@@ -608,6 +608,18 @@ RevalidateCachedQuery(CachedPlanSource *plansource)
 		&& (plansource->planUserId != GetUserId()
 			|| plansource->row_security_env != row_security))
 		plansource->is_valid = false;
+
+	/*
+	 * If we have a join pushed down to the foreign server and the current user
+	 * is different from the one for which the plan was created, invalidate the
+	 * generic plan since user mapping for the new user might make the join
+	 * unsafe to push down, or change which user mapping is used.
+	 */
+	if (plansource->is_valid &&
+		plansource->gplan &&
+		plansource->gplan->has_foreign_join &&
+		plansource->planUserId != GetUserId())
+		plansource->gplan->is_valid = false;
 
 	/*
 	 * If the query is currently valid, acquire locks on the referenced
@@ -642,6 +654,14 @@ RevalidateCachedQuery(CachedPlanSource *plansource)
 	plansource->relationOids = NIL;
 	plansource->invalItems = NIL;
 	plansource->search_path = NULL;
+
+	/*
+	 * The plan is invalid, possibly due to row security, so we need to reset
+	 * row_security_env and planUserId as we're about to re-plan with the
+	 * current settings.
+	 */
+	plansource->row_security_env = row_security;
+	plansource->planUserId = GetUserId();
 
 	/*
 	 * Free the query_context.  We don't really expect MemoryContextDelete to
@@ -881,6 +901,7 @@ BuildCachedPlan(CachedPlanSource *plansource, List *qlist,
 	bool		spi_pushed;
 	MemoryContext plan_context;
 	MemoryContext oldcxt = CurrentMemoryContext;
+	ListCell	*lc;
 
 	/*
 	 * Normally the querytree should be valid already, but if it's not,
@@ -987,6 +1008,20 @@ BuildCachedPlan(CachedPlanSource *plansource, List *qlist,
 	plan->is_oneshot = plansource->is_oneshot;
 	plan->is_saved = false;
 	plan->is_valid = true;
+
+	/*
+	 * Walk through the plist and set hasForeignJoin if any of the plans have
+	 * it set.
+	 */
+	plan->has_foreign_join = false;
+	foreach(lc, plist)
+	{
+		PlannedStmt	*plan_stmt = (PlannedStmt *) lfirst(lc);
+
+		if (IsA(plan_stmt, PlannedStmt))
+			plan->has_foreign_join =
+				plan->has_foreign_join || plan_stmt->hasForeignJoin;
+	}
 
 	/* assign generation number to new plan */
 	plan->generation = ++(plansource->generation);
@@ -1379,6 +1414,14 @@ CopyCachedPlan(CachedPlanSource *plansource)
 	newsource->generic_cost = plansource->generic_cost;
 	newsource->total_custom_cost = plansource->total_custom_cost;
 	newsource->num_custom_plans = plansource->num_custom_plans;
+
+	/*
+	 * Copy over the user the query was planned as, and under what RLS
+	 * environment.  We will check during RevalidateCachedQuery() if the user
+	 * or environment has changed and, if so, will force a re-plan.
+	 */
+	newsource->planUserId = plansource->planUserId;
+	newsource->row_security_env = plansource->row_security_env;
 
 	MemoryContextSwitchTo(oldcxt);
 
@@ -1841,6 +1884,40 @@ static void
 PlanCacheSysCallback(Datum arg, int cacheid, uint32 hashvalue)
 {
 	ResetPlanCache();
+}
+
+/*
+ * PlanCacheUserMappingCallback
+ * 		Syscache inval callback function for user mapping cache invalidation.
+ *
+ * 	Invalidates plans which have pushed down foreign joins.
+ */
+static void
+PlanCacheUserMappingCallback(Datum arg, int cacheid, uint32 hashvalue)
+{
+	CachedPlanSource *plansource;
+
+	for (plansource = first_saved_plan; plansource; plansource = plansource->next_saved)
+	{
+		Assert(plansource->magic == CACHEDPLANSOURCE_MAGIC);
+
+		/* No work if it's already invalidated */
+		if (!plansource->is_valid)
+			continue;
+
+		/* Never invalidate transaction control commands */
+		if (IsTransactionStmtPlan(plansource))
+			continue;
+
+		/*
+		 * If the plan has pushed down foreign joins, those join may become
+		 * unsafe to push down because of user mapping changes. Invalidate only
+		 * the generic plan, since changes to user mapping do not invalidate the
+		 * parse tree.
+		 */
+		if (plansource->gplan && plansource->gplan->has_foreign_join)
+			plansource->gplan->is_valid = false;
+	}
 }
 
 /*

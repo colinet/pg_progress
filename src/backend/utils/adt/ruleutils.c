@@ -4,7 +4,7 @@
  *	  Functions to convert stored expressions/querytrees back to
  *	  source text
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -19,11 +19,13 @@
 #include <unistd.h>
 #include <fcntl.h>
 
+#include "access/amapi.h"
 #include "access/htup_details.h"
 #include "access/sysattr.h"
 #include "catalog/dependency.h"
 #include "catalog/indexing.h"
 #include "catalog/pg_aggregate.h"
+#include "catalog/pg_am.h"
 #include "catalog/pg_authid.h"
 #include "catalog/pg_collation.h"
 #include "catalog/pg_constraint.h"
@@ -36,6 +38,7 @@
 #include "catalog/pg_type.h"
 #include "commands/defrem.h"
 #include "commands/tablespace.h"
+#include "common/keywords.h"
 #include "executor/spi.h"
 #include "funcapi.h"
 #include "mb/pg_wchar.h"
@@ -43,7 +46,6 @@
 #include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
 #include "optimizer/tlist.h"
-#include "parser/keywords.h"
 #include "parser/parse_node.h"
 #include "parser/parse_agg.h"
 #include "parser/parse_func.h"
@@ -390,6 +392,11 @@ static void get_rule_windowspec(WindowClause *wc, List *targetList,
 					deparse_context *context);
 static char *get_variable(Var *var, int levelsup, bool istoplevel,
 			 deparse_context *context);
+static void get_special_variable(Node *node, deparse_context *context,
+					 void *private);
+static void resolve_special_varno(Node *node, deparse_context *context,
+					  void *private,
+					  void (*callback) (Node *, deparse_context *, void *));
 static Node *find_param_referent(Param *param, deparse_context *context,
 					deparse_namespace **dpns_p, ListCell **ancestor_cell_p);
 static void get_parameter(Param *param, deparse_context *context);
@@ -405,7 +412,10 @@ static void get_rule_expr_toplevel(Node *node, deparse_context *context,
 static void get_oper_expr(OpExpr *expr, deparse_context *context);
 static void get_func_expr(FuncExpr *expr, deparse_context *context,
 			  bool showimplicit);
-static void get_agg_expr(Aggref *aggref, deparse_context *context);
+static void get_agg_expr(Aggref *aggref, deparse_context *context,
+			 Aggref *original_aggref);
+static void get_agg_combine_expr(Node *node, deparse_context *context,
+					 void *private);
 static void get_windowfunc_expr(WindowFunc *wfunc, deparse_context *context);
 static void get_coercion_expr(Node *arg, deparse_context *context,
 				  Oid resulttype, int32 resulttypmod,
@@ -1019,6 +1029,7 @@ pg_get_indexdef_worker(Oid indexrelid, int colno,
 	Form_pg_index idxrec;
 	Form_pg_class idxrelrec;
 	Form_pg_am	amrec;
+	IndexAmRoutine *amroutine;
 	List	   *indexprs;
 	ListCell   *indexpr_item;
 	List	   *context;
@@ -1078,6 +1089,9 @@ pg_get_indexdef_worker(Oid indexrelid, int colno,
 		elog(ERROR, "cache lookup failed for access method %u",
 			 idxrelrec->relam);
 	amrec = (Form_pg_am) GETSTRUCT(ht_am);
+
+	/* Fetch the index AM's API struct */
+	amroutine = GetIndexAmRoutine(amrec->amhandler);
 
 	/*
 	 * Get the index expressions, if any.  (NOTE: we do not use the relcache
@@ -1190,7 +1204,7 @@ pg_get_indexdef_worker(Oid indexrelid, int colno,
 			get_opclass_name(indclass->values[keyno], keycoltype, &buf);
 
 			/* Add options if relevant */
-			if (amrec->amcanorder)
+			if (amroutine->amcanorder)
 			{
 				/* if it supports sort ordering, report DESC and NULLS opts */
 				if (opt & INDOPTION_DESC)
@@ -1982,6 +1996,19 @@ pg_get_functiondef(PG_FUNCTION_ARGS)
 		case PROVOLATILE_VOLATILE:
 			break;
 	}
+
+	switch (proc->proparallel)
+	{
+		case PROPARALLEL_SAFE:
+			appendStringInfoString(&buf, " PARALLEL SAFE");
+			break;
+		case PROPARALLEL_RESTRICTED:
+			appendStringInfoString(&buf, " PARALLEL RESTRICTED");
+			break;
+		case PROPARALLEL_UNSAFE:
+			break;
+	}
+
 	if (proc->proisstrict)
 		appendStringInfoString(&buf, " STRICT");
 	if (proc->prosecdef)
@@ -5526,9 +5553,21 @@ get_insert_query_def(Query *query, deparse_context *context)
 			/* Add a WHERE clause (for partial indexes) if given */
 			if (confl->arbiterWhere != NULL)
 			{
+				bool		save_varprefix;
+
+				/*
+				 * Force non-prefixing of Vars, since parser assumes that they
+				 * belong to target relation.  WHERE clause does not use
+				 * InferenceElem, so this is separately required.
+				 */
+				save_varprefix = context->varprefix;
+				context->varprefix = false;
+
 				appendContextKeyword(context, " WHERE ",
 									 -PRETTYINDENT_STD, PRETTYINDENT_STD, 1);
 				get_rule_expr(confl->arbiterWhere, context, false);
+
+				context->varprefix = save_varprefix;
 			}
 		}
 		else if (confl->constraint != InvalidOid)
@@ -5846,7 +5885,6 @@ get_utility_query_def(Query *query, deparse_context *context)
 	}
 }
 
-
 /*
  * Display a Var appropriately.
  *
@@ -5899,82 +5937,11 @@ get_variable(Var *var, int levelsup, bool istoplevel, deparse_context *context)
 		colinfo = deparse_columns_fetch(var->varno, dpns);
 		attnum = var->varattno;
 	}
-	else if (var->varno == OUTER_VAR && dpns->outer_tlist)
-	{
-		TargetEntry *tle;
-		deparse_namespace save_dpns;
-
-		tle = get_tle_by_resno(dpns->outer_tlist, var->varattno);
-		if (!tle)
-			elog(ERROR, "bogus varattno for OUTER_VAR var: %d", var->varattno);
-
-		Assert(netlevelsup == 0);
-		push_child_plan(dpns, dpns->outer_planstate, &save_dpns);
-
-		/*
-		 * Force parentheses because our caller probably assumed a Var is a
-		 * simple expression.
-		 */
-		if (!IsA(tle->expr, Var))
-			appendStringInfoChar(buf, '(');
-		get_rule_expr((Node *) tle->expr, context, true);
-		if (!IsA(tle->expr, Var))
-			appendStringInfoChar(buf, ')');
-
-		pop_child_plan(dpns, &save_dpns);
-		return NULL;
-	}
-	else if (var->varno == INNER_VAR && dpns->inner_tlist)
-	{
-		TargetEntry *tle;
-		deparse_namespace save_dpns;
-
-		tle = get_tle_by_resno(dpns->inner_tlist, var->varattno);
-		if (!tle)
-			elog(ERROR, "bogus varattno for INNER_VAR var: %d", var->varattno);
-
-		Assert(netlevelsup == 0);
-		push_child_plan(dpns, dpns->inner_planstate, &save_dpns);
-
-		/*
-		 * Force parentheses because our caller probably assumed a Var is a
-		 * simple expression.
-		 */
-		if (!IsA(tle->expr, Var))
-			appendStringInfoChar(buf, '(');
-		get_rule_expr((Node *) tle->expr, context, true);
-		if (!IsA(tle->expr, Var))
-			appendStringInfoChar(buf, ')');
-
-		pop_child_plan(dpns, &save_dpns);
-		return NULL;
-	}
-	else if (var->varno == INDEX_VAR && dpns->index_tlist)
-	{
-		TargetEntry *tle;
-
-		tle = get_tle_by_resno(dpns->index_tlist, var->varattno);
-		if (!tle)
-			elog(ERROR, "bogus varattno for INDEX_VAR var: %d", var->varattno);
-
-		Assert(netlevelsup == 0);
-
-		/*
-		 * Force parentheses because our caller probably assumed a Var is a
-		 * simple expression.
-		 */
-		if (!IsA(tle->expr, Var))
-			appendStringInfoChar(buf, '(');
-		get_rule_expr((Node *) tle->expr, context, true);
-		if (!IsA(tle->expr, Var))
-			appendStringInfoChar(buf, ')');
-
-		return NULL;
-	}
 	else
 	{
-		elog(ERROR, "bogus varno: %d", var->varno);
-		return NULL;			/* keep compiler quiet */
+		resolve_special_varno((Node *) var, context, NULL,
+							  get_special_variable);
+		return NULL;
 	}
 
 	/*
@@ -6087,6 +6054,101 @@ get_variable(Var *var, int levelsup, bool istoplevel, deparse_context *context)
 	return attname;
 }
 
+/*
+ * Deparse a Var which references OUTER_VAR, INNER_VAR, or INDEX_VAR.  This
+ * routine is actually a callback for get_special_varno, which handles finding
+ * the correct TargetEntry.  We get the expression contained in that
+ * TargetEntry and just need to deparse it, a job we can throw back on
+ * get_rule_expr.
+ */
+static void
+get_special_variable(Node *node, deparse_context *context, void *private)
+{
+	StringInfo	buf = context->buf;
+
+	/*
+	 * Force parentheses because our caller probably assumed a Var is a simple
+	 * expression.
+	 */
+	if (!IsA(node, Var))
+		appendStringInfoChar(buf, '(');
+	get_rule_expr(node, context, true);
+	if (!IsA(node, Var))
+		appendStringInfoChar(buf, ')');
+}
+
+/*
+ * Chase through plan references to special varnos (OUTER_VAR, INNER_VAR,
+ * INDEX_VAR) until we find a real Var or some kind of non-Var node; then,
+ * invoke the callback provided.
+ */
+static void
+resolve_special_varno(Node *node, deparse_context *context, void *private,
+					  void (*callback) (Node *, deparse_context *, void *))
+{
+	Var		   *var;
+	deparse_namespace *dpns;
+
+	/* If it's not a Var, invoke the callback. */
+	if (!IsA(node, Var))
+	{
+		callback(node, context, private);
+		return;
+	}
+
+	/* Find appropriate nesting depth */
+	var = (Var *) node;
+	dpns = (deparse_namespace *) list_nth(context->namespaces,
+										  var->varlevelsup);
+
+	/*
+	 * It's a special RTE, so recurse.
+	 */
+	if (var->varno == OUTER_VAR && dpns->outer_tlist)
+	{
+		TargetEntry *tle;
+		deparse_namespace save_dpns;
+
+		tle = get_tle_by_resno(dpns->outer_tlist, var->varattno);
+		if (!tle)
+			elog(ERROR, "bogus varattno for OUTER_VAR var: %d", var->varattno);
+
+		push_child_plan(dpns, dpns->outer_planstate, &save_dpns);
+		resolve_special_varno((Node *) tle->expr, context, private, callback);
+		pop_child_plan(dpns, &save_dpns);
+		return;
+	}
+	else if (var->varno == INNER_VAR && dpns->inner_tlist)
+	{
+		TargetEntry *tle;
+		deparse_namespace save_dpns;
+
+		tle = get_tle_by_resno(dpns->inner_tlist, var->varattno);
+		if (!tle)
+			elog(ERROR, "bogus varattno for INNER_VAR var: %d", var->varattno);
+
+		push_child_plan(dpns, dpns->inner_planstate, &save_dpns);
+		resolve_special_varno((Node *) tle->expr, context, private, callback);
+		pop_child_plan(dpns, &save_dpns);
+		return;
+	}
+	else if (var->varno == INDEX_VAR && dpns->index_tlist)
+	{
+		TargetEntry *tle;
+
+		tle = get_tle_by_resno(dpns->index_tlist, var->varattno);
+		if (!tle)
+			elog(ERROR, "bogus varattno for INDEX_VAR var: %d", var->varattno);
+
+		resolve_special_varno((Node *) tle->expr, context, private, callback);
+		return;
+	}
+	else if (var->varno < 1 || var->varno > list_length(dpns->rtable))
+		elog(ERROR, "bogus varno: %d", var->varno);
+
+	/* Not special.  Just invoke the callback. */
+	callback(node, context, private);
+}
 
 /*
  * Get the name of a field of an expression of composite type.  The
@@ -7049,7 +7111,7 @@ get_rule_expr(Node *node, deparse_context *context,
 			break;
 
 		case T_Aggref:
-			get_agg_expr((Aggref *) node, context);
+			get_agg_expr((Aggref *) node, context, (Aggref *) node);
 			break;
 
 		case T_GroupingFunc:
@@ -7191,6 +7253,24 @@ get_rule_expr(Node *node, deparse_context *context,
 									  get_base_element_type(exprType(arg2))),
 								 expr->useOr ? "ANY" : "ALL");
 				get_rule_expr_paren(arg2, context, true, node);
+
+				/*
+				 * There's inherent ambiguity in "x op ANY/ALL (y)" when y is
+				 * a bare sub-SELECT.  Since we're here, the sub-SELECT must
+				 * be meant as a scalar sub-SELECT yielding an array value to
+				 * be used in ScalarArrayOpExpr; but the grammar will
+				 * preferentially interpret such a construct as an ANY/ALL
+				 * SubLink.  To prevent misparsing the output that way, insert
+				 * a dummy coercion (which will be stripped by parse analysis,
+				 * so no inefficiency is added in dump and reload).  This is
+				 * indeed most likely what the user wrote to get the construct
+				 * accepted in the first place.
+				 */
+				if (IsA(arg2, SubLink) &&
+					((SubLink *) arg2)->subLinkType == EXPR_SUBLINK)
+					appendStringInfo(buf, "::%s",
+									 format_type_with_typemod(exprType(arg2),
+														  exprTypmod(arg2)));
 				appendStringInfoChar(buf, ')');
 				if (!PRETTY_PAREN(context))
 					appendStringInfoChar(buf, ')');
@@ -7950,13 +8030,14 @@ get_rule_expr(Node *node, deparse_context *context,
 		case T_InferenceElem:
 			{
 				InferenceElem *iexpr = (InferenceElem *) node;
-				bool		varprefix = context->varprefix;
+				bool		save_varprefix;
 				bool		need_parens;
 
 				/*
 				 * InferenceElem can only refer to target relation, so a
-				 * prefix is never useful.
+				 * prefix is not useful, and indeed would cause parse errors.
 				 */
+				save_varprefix = context->varprefix;
 				context->varprefix = false;
 
 				/*
@@ -7976,7 +8057,7 @@ get_rule_expr(Node *node, deparse_context *context,
 				if (need_parens)
 					appendStringInfoChar(buf, ')');
 
-				context->varprefix = varprefix;
+				context->varprefix = save_varprefix;
 
 				if (iexpr->infercollid)
 					appendStringInfo(buf, " COLLATE %s",
@@ -8186,12 +8267,35 @@ get_func_expr(FuncExpr *expr, deparse_context *context,
  * get_agg_expr			- Parse back an Aggref node
  */
 static void
-get_agg_expr(Aggref *aggref, deparse_context *context)
+get_agg_expr(Aggref *aggref, deparse_context *context,
+			 Aggref *original_aggref)
 {
 	StringInfo	buf = context->buf;
 	Oid			argtypes[FUNC_MAX_ARGS];
 	int			nargs;
 	bool		use_variadic;
+
+	/*
+	 * For a combining aggregate, we look up and deparse the corresponding
+	 * partial aggregate instead.  This is necessary because our input
+	 * argument list has been replaced; the new argument list always has just
+	 * one element, which will point to a partial Aggref that supplies us with
+	 * transition states to combine.
+	 */
+	if (aggref->aggcombine)
+	{
+		TargetEntry *tle = linitial(aggref->args);
+
+		Assert(list_length(aggref->args) == 1);
+		Assert(IsA(tle, TargetEntry));
+		resolve_special_varno((Node *) tle->expr, context, original_aggref,
+							  get_agg_combine_expr);
+		return;
+	}
+
+	/* Mark as PARTIAL, if appropriate. */
+	if (original_aggref->aggpartial)
+		appendStringInfoString(buf, "PARTIAL ");
 
 	/* Extract the argument types as seen by the parser */
 	nargs = get_aggregate_argtypes(aggref, argtypes);
@@ -8259,6 +8363,24 @@ get_agg_expr(Aggref *aggref, deparse_context *context)
 	}
 
 	appendStringInfoChar(buf, ')');
+}
+
+/*
+ * This is a helper function for get_agg_expr().  It's used when we deparse
+ * a combining Aggref; resolve_special_varno locates the corresponding partial
+ * Aggref and then calls this.
+ */
+static void
+get_agg_combine_expr(Node *node, deparse_context *context, void *private)
+{
+	Aggref	   *aggref;
+	Aggref	   *original_aggref = private;
+
+	if (!IsA(node, Aggref))
+		elog(ERROR, "combining Aggref does not point to an Aggref");
+
+	aggref = (Aggref *) node;
+	get_agg_expr(aggref, context, original_aggref);
 }
 
 /*
@@ -9372,10 +9494,12 @@ printSubscripts(ArrayRef *aref, deparse_context *context)
 		appendStringInfoChar(buf, '[');
 		if (lowlist_item)
 		{
+			/* If subexpression is NULL, get_rule_expr prints nothing */
 			get_rule_expr((Node *) lfirst(lowlist_item), context, false);
 			appendStringInfoChar(buf, ':');
 			lowlist_item = lnext(lowlist_item);
 		}
+		/* If subexpression is NULL, get_rule_expr prints nothing */
 		get_rule_expr((Node *) lfirst(uplist_item), context, false);
 		appendStringInfoChar(buf, ']');
 	}
@@ -9856,18 +9980,59 @@ flatten_reloptions(Oid relid)
 								 Anum_pg_class_reloptions, &isnull);
 	if (!isnull)
 	{
-		Datum		sep,
-					txt;
+		StringInfoData buf;
+		Datum	   *options;
+		int			noptions;
+		int			i;
 
-		/*
-		 * We want to use array_to_text(reloptions, ', ') --- but
-		 * DirectFunctionCall2(array_to_text) does not work, because
-		 * array_to_text() relies on flinfo to be valid.  So use
-		 * OidFunctionCall2.
-		 */
-		sep = CStringGetTextDatum(", ");
-		txt = OidFunctionCall2(F_ARRAY_TO_TEXT, reloptions, sep);
-		result = TextDatumGetCString(txt);
+		initStringInfo(&buf);
+
+		deconstruct_array(DatumGetArrayTypeP(reloptions),
+						  TEXTOID, -1, false, 'i',
+						  &options, NULL, &noptions);
+
+		for (i = 0; i < noptions; i++)
+		{
+			char	   *option = TextDatumGetCString(options[i]);
+			char	   *name;
+			char	   *separator;
+			char	   *value;
+
+			/*
+			 * Each array element should have the form name=value.  If the "="
+			 * is missing for some reason, treat it like an empty value.
+			 */
+			name = option;
+			separator = strchr(option, '=');
+			if (separator)
+			{
+				*separator = '\0';
+				value = separator + 1;
+			}
+			else
+				value = "";
+
+			if (i > 0)
+				appendStringInfoString(&buf, ", ");
+			appendStringInfo(&buf, "%s=", quote_identifier(name));
+
+			/*
+			 * In general we need to quote the value; but to avoid unnecessary
+			 * clutter, do not quote if it is an identifier that would not
+			 * need quoting.  (We could also allow numbers, but that is a bit
+			 * trickier than it looks --- for example, are leading zeroes
+			 * significant?  We don't want to assume very much here about what
+			 * custom reloptions might mean.)
+			 */
+			if (quote_identifier(value) == value)
+				appendStringInfoString(&buf, value);
+			else
+				simple_quote_literal(&buf, value);
+
+			pfree(option);
+		}
+
+		result = buf.data;
 	}
 
 	ReleaseSysCache(tuple);

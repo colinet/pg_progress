@@ -6,7 +6,7 @@
  * See src/backend/optimizer/README for discussion of EquivalenceClasses.
  *
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -910,7 +910,8 @@ generate_base_implied_equalities_no_const(PlannerInfo *root,
 	{
 		EquivalenceMember *cur_em = (EquivalenceMember *) lfirst(lc);
 		List	   *vars = pull_var_clause((Node *) cur_em->em_expr,
-										   PVC_RECURSE_AGGREGATES,
+										   PVC_RECURSE_AGGREGATES |
+										   PVC_RECURSE_WINDOWFUNCS |
 										   PVC_INCLUDE_PLACEHOLDERS);
 
 		add_vars_to_targetlist(root, vars, ec->ec_relids, false);
@@ -987,13 +988,31 @@ generate_base_implied_equalities_broken(PlannerInfo *root,
  *
  * join_relids should always equal bms_union(outer_relids, inner_rel->relids).
  * We could simplify this function's API by computing it internally, but in
- * all current uses, the caller has the value at hand anyway.
+ * most current uses, the caller has the value at hand anyway.
  */
 List *
 generate_join_implied_equalities(PlannerInfo *root,
 								 Relids join_relids,
 								 Relids outer_relids,
 								 RelOptInfo *inner_rel)
+{
+	return generate_join_implied_equalities_for_ecs(root,
+													root->eq_classes,
+													join_relids,
+													outer_relids,
+													inner_rel);
+}
+
+/*
+ * generate_join_implied_equalities_for_ecs
+ *	  As above, but consider only the listed ECs.
+ */
+List *
+generate_join_implied_equalities_for_ecs(PlannerInfo *root,
+										 List *eclasses,
+										 Relids join_relids,
+										 Relids outer_relids,
+										 RelOptInfo *inner_rel)
 {
 	List	   *result = NIL;
 	Relids		inner_relids = inner_rel->relids;
@@ -1015,7 +1034,7 @@ generate_join_implied_equalities(PlannerInfo *root,
 		nominal_join_relids = join_relids;
 	}
 
-	foreach(lc, root->eq_classes)
+	foreach(lc, eclasses)
 	{
 		EquivalenceClass *ec = (EquivalenceClass *) lfirst(lc);
 		List	   *sublist = NIL;
@@ -1993,48 +2012,6 @@ add_child_rel_equivalences(PlannerInfo *root,
 									 new_relids, new_nullable_relids,
 									 true, cur_em->em_datatype);
 			}
-		}
-	}
-}
-
-
-/*
- * mutate_eclass_expressions
- *	  Apply an expression tree mutator to all expressions stored in
- *	  equivalence classes (but ignore child exprs unless include_child_exprs).
- *
- * This is a bit of a hack ... it's currently needed only by planagg.c,
- * which needs to do a global search-and-replace of MIN/MAX Aggrefs
- * after eclasses are already set up.  Without changing the eclasses too,
- * subsequent matching of ORDER BY and DISTINCT clauses would fail.
- *
- * Note that we assume the mutation won't affect relation membership or any
- * other properties we keep track of (which is a bit bogus, but by the time
- * planagg.c runs, it no longer matters).  Also we must be called in the
- * main planner memory context.
- */
-void
-mutate_eclass_expressions(PlannerInfo *root,
-						  Node *(*mutator) (),
-						  void *context,
-						  bool include_child_exprs)
-{
-	ListCell   *lc1;
-
-	foreach(lc1, root->eq_classes)
-	{
-		EquivalenceClass *cur_ec = (EquivalenceClass *) lfirst(lc1);
-		ListCell   *lc2;
-
-		foreach(lc2, cur_ec->ec_members)
-		{
-			EquivalenceMember *cur_em = (EquivalenceMember *) lfirst(lc2);
-
-			if (cur_em->em_is_child && !include_child_exprs)
-				continue;		/* ignore children unless requested */
-
-			cur_em->em_expr = (Expr *)
-				mutator((Node *) cur_em->em_expr, context);
 		}
 	}
 }

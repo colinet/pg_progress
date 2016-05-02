@@ -4,7 +4,7 @@
  *	  This file contains definitions for structures and
  *	  externs for functions used by frontend postgres applications.
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/interfaces/libpq/libpq-fe.h
@@ -463,6 +463,9 @@ extern PGresult *PQfn(PGconn *conn,
 extern ExecStatusType PQresultStatus(const PGresult *res);
 extern char *PQresStatus(ExecStatusType status);
 extern char *PQresultErrorMessage(const PGresult *res);
+extern char *PQresultVerboseErrorMessage(const PGresult *res,
+							PGVerbosity verbosity,
+							PGContextVisibility show_context);
 extern char *PQresultErrorField(const PGresult *res, int fieldcode);
 extern int	PQntuples(const PGresult *res);
 extern int	PQnfields(const PGresult *res);

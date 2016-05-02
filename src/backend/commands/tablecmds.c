@@ -3,7 +3,7 @@
  * tablecmds.c
  *	  Commands for creating and altering table structures and settings
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -29,8 +29,10 @@
 #include "catalog/indexing.h"
 #include "catalog/namespace.h"
 #include "catalog/objectaccess.h"
+#include "catalog/pg_am.h"
 #include "catalog/pg_collation.h"
 #include "catalog/pg_constraint.h"
+#include "catalog/pg_constraint_fn.h"
 #include "catalog/pg_depend.h"
 #include "catalog/pg_foreign_table.h"
 #include "catalog/pg_inherits.h"
@@ -1613,8 +1615,10 @@ MergeAttributes(List *schema, List *supers, char relpersistence,
 						errmsg("inherited column \"%s\" has a type conflict",
 							   attributeName),
 							 errdetail("%s versus %s",
-									   TypeNameToString(def->typeName),
-									   format_type_be(attribute->atttypid))));
+									   format_type_with_typemod(defTypeId,
+																deftypmod),
+								format_type_with_typemod(attribute->atttypid,
+													attribute->atttypmod))));
 				defCollId = GetColumnDefCollation(NULL, def, defTypeId);
 				if (defCollId != attribute->attcollation)
 					ereport(ERROR,
@@ -1832,8 +1836,10 @@ MergeAttributes(List *schema, List *supers, char relpersistence,
 							 errmsg("column \"%s\" has a type conflict",
 									attributeName),
 							 errdetail("%s versus %s",
-									   TypeNameToString(def->typeName),
-									   TypeNameToString(newdef->typeName))));
+									   format_type_with_typemod(defTypeId,
+																deftypmod),
+									   format_type_with_typemod(newTypeId,
+																newtypmod))));
 				defcollid = GetColumnDefCollation(NULL, def, defTypeId);
 				newcollid = GetColumnDefCollation(NULL, newdef, newTypeId);
 				if (defcollid != newcollid)
@@ -3560,6 +3566,8 @@ ATExecCmd(List **wqueue, AlteredTableInfo *tab, Relation rel,
 												(List *) cmd->def, lockmode);
 			break;
 		case AT_ChangeOwner:	/* ALTER OWNER */
+			check_rolespec_name(cmd->newowner,
+								"Cannot specify reserved role as owner.");
 			ATExecChangeOwner(RelationGetRelid(rel),
 							  get_rolespec_oid(cmd->newowner, false),
 							  false, lockmode);
@@ -9397,7 +9405,7 @@ ATExecSetRelOptions(Relation rel, List *defList, AlterTableType operation,
 			(void) view_reloptions(newOptions, true);
 			break;
 		case RELKIND_INDEX:
-			(void) index_reloptions(rel->rd_am->amoptions, newOptions, true);
+			(void) index_reloptions(rel->rd_amroutine->amoptions, newOptions, true);
 			break;
 		default:
 			ereport(ERROR,
@@ -11007,7 +11015,8 @@ ATExecReplicaIdentity(Relation rel, ReplicaIdentityStmt *stmt, LOCKMODE lockmode
 						RelationGetRelationName(indexRel),
 						RelationGetRelationName(rel))));
 	/* The AM must support uniqueness, and the index must in fact be unique. */
-	if (!indexRel->rd_am->amcanunique || !indexRel->rd_index->indisunique)
+	if (!indexRel->rd_amroutine->amcanunique ||
+		!indexRel->rd_index->indisunique)
 		ereport(ERROR,
 				(errcode(ERRCODE_WRONG_OBJECT_TYPE),
 			 errmsg("cannot use non-unique index \"%s\" as replica identity",
@@ -11043,10 +11052,20 @@ ATExecReplicaIdentity(Relation rel, ReplicaIdentityStmt *stmt, LOCKMODE lockmode
 		int16		attno = indexRel->rd_index->indkey.values[key];
 		Form_pg_attribute attr;
 
-		/* Of the system columns, only oid is indexable. */
-		if (attno <= 0 && attno != ObjectIdAttributeNumber)
-			elog(ERROR, "internal column %u in unique index \"%s\"",
-				 attno, RelationGetRelationName(indexRel));
+		/* Allow OID column to be indexed; it's certainly not nullable */
+		if (attno == ObjectIdAttributeNumber)
+			continue;
+
+		/*
+		 * Reject any other system columns.  (Going forward, we'll disallow
+		 * indexes containing such columns in the first place, but they might
+		 * exist in older branches.)
+		 */
+		if (attno <= 0)
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_COLUMN_REFERENCE),
+					 errmsg("index \"%s\" cannot be used as replica identity because column %d is a system column",
+							RelationGetRelationName(indexRel), attno)));
 
 		attr = rel->rd_att->attrs[attno - 1];
 		if (!attr->attnotnull)

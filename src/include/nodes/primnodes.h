@@ -7,7 +7,7 @@
  *	  and join trees.
  *
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/nodes/primnodes.h
@@ -165,6 +165,11 @@ typedef struct Var
 
 /*
  * Const
+ *
+ * Note: for varlena data types, we make a rule that a Const node's value
+ * must be in non-extended form (4-byte header, no compression or external
+ * references).  This ensures that the Const node is self-contained and makes
+ * it more likely that equal() will see logically identical values as equal.
  */
 typedef struct Const
 {
@@ -250,12 +255,21 @@ typedef struct Param
  * DISTINCT is not supported in this case, so aggdistinct will be NIL.
  * The direct arguments appear in aggdirectargs (as a list of plain
  * expressions, not TargetEntry nodes).
+ *
+ * 'aggtype' and 'aggoutputtype' are the same except when we're performing
+ * partal aggregation; in that case, we output transition states.  Nothing
+ * interesting happens in the Aggref itself, but we must set the output data
+ * type to whatever type is used for transition values.
+ *
+ * Note: If you are adding fields here you may also need to add a comparison
+ * in search_indexed_tlist_for_partial_aggref()
  */
 typedef struct Aggref
 {
 	Expr		xpr;
 	Oid			aggfnoid;		/* pg_proc Oid of the aggregate */
-	Oid			aggtype;		/* type Oid of result of the aggregate */
+	Oid			aggtype;		/* type Oid of final result of the aggregate */
+	Oid			aggoutputtype;	/* type Oid of result of this aggregate */
 	Oid			aggcollid;		/* OID of collation of result */
 	Oid			inputcollid;	/* OID of collation that function should use */
 	List	   *aggdirectargs;	/* direct arguments, if an ordered-set agg */
@@ -266,6 +280,8 @@ typedef struct Aggref
 	bool		aggstar;		/* TRUE if argument list was really '*' */
 	bool		aggvariadic;	/* true if variadic arguments have been
 								 * combined into an array last argument */
+	bool		aggcombine;		/* combining agg; input is a transvalue */
+	bool		aggpartial;		/* partial agg; output is a transvalue */
 	char		aggkind;		/* aggregate kind (see pg_aggregate.h) */
 	Index		agglevelsup;	/* > 0 if agg belongs to outer query */
 	int			location;		/* token location, or -1 if unknown */
@@ -341,6 +357,9 @@ typedef struct WindowFunc
  * reflowerindexpr must be the same length as refupperindexpr when it
  * is not NIL.
  *
+ * In the slice case, individual expressions in the subscript lists can be
+ * NULL, meaning "substitute the array's current lower or upper bound".
+ *
  * Note: the result datatype is the element type when fetching a single
  * element; but it is the array type when doing subarray fetch or either
  * type of store.
@@ -360,7 +379,7 @@ typedef struct ArrayRef
 	List	   *refupperindexpr;/* expressions that evaluate to upper array
 								 * indexes */
 	List	   *reflowerindexpr;/* expressions that evaluate to lower array
-								 * indexes */
+								 * indexes, or NIL for single array element */
 	Expr	   *refexpr;		/* the expression that evaluates to an array
 								 * value */
 	Expr	   *refassgnexpr;	/* expression for the source value, or NULL if

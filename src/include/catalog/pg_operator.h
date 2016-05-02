@@ -5,7 +5,7 @@
  *	  along with the relation's initial contents.
  *
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/catalog/pg_operator.h
@@ -23,8 +23,6 @@
 #define PG_OPERATOR_H
 
 #include "catalog/genbki.h"
-#include "catalog/objectaddress.h"
-#include "nodes/pg_list.h"
 
 /* ----------------
  *		pg_operator definition.  cpp turns this into
@@ -1677,6 +1675,9 @@ DATA(insert OID = 3680 (  "&&"	   PGNSP PGUID b f f 3615	 3615	 3615  0	0	 tsque
 DESCR("AND-concatenate");
 DATA(insert OID = 3681 (  "||"	   PGNSP PGUID b f f 3615	 3615	 3615  0	0	 tsquery_or   -		-	  ));
 DESCR("OR-concatenate");
+/* <-> operation calls tsquery_phrase, but function is polymorphic. So, point to OID of the tsquery_phrase */
+DATA(insert OID = 5005 (  "<->"	   PGNSP PGUID b f f 3615    3615    3615  0    0    5003   -       -     ));
+DESCR("phrase-concatenate");
 DATA(insert OID = 3682 (  "!!"	   PGNSP PGUID l f f 0		 3615	 3615  0	0	 tsquery_not   -	-	  ));
 DESCR("NOT tsquery");
 DATA(insert OID = 3693 (  "@>"	   PGNSP PGUID b f f 3615	 3615	 16 3694	0	 tsq_mcontains	contsel    contjoinsel	 ));
@@ -1825,20 +1826,5 @@ DATA(insert OID = 3286 (  "-"	   PGNSP PGUID b f f 3802 23 3802 0 0 3303 - - ));
 DESCR("delete array element");
 DATA(insert OID = 3287 (  "#-"	   PGNSP PGUID b f f 3802 1009 3802 0 0 jsonb_delete_path - - ));
 DESCR("delete path");
-
-/*
- * function prototypes
- */
-extern ObjectAddress OperatorCreate(const char *operatorName,
-			   Oid operatorNamespace,
-			   Oid leftTypeId,
-			   Oid rightTypeId,
-			   Oid procedureId,
-			   List *commutatorName,
-			   List *negatorName,
-			   Oid restrictionId,
-			   Oid joinId,
-			   bool canMerge,
-			   bool canHash);
 
 #endif   /* PG_OPERATOR_H */

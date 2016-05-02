@@ -1,7 +1,7 @@
 /*
  * psql - the PostgreSQL interactive terminal
  *
- * Copyright (c) 2000-2015, PostgreSQL Global Development Group
+ * Copyright (c) 2000-2016, PostgreSQL Global Development Group
  *
  * src/bin/psql/copy.c
  */
@@ -18,7 +18,6 @@
 
 #include "libpq-fe.h"
 #include "pqexpbuffer.h"
-#include "dumputils.h"
 
 #include "settings.h"
 #include "common.h"

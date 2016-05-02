@@ -3,7 +3,7 @@
  * heapdesc.c
  *	  rmgr descriptor routines for access/heap/heapam.c
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -125,7 +125,8 @@ heap2_desc(StringInfo buf, XLogReaderState *record)
 	{
 		xl_heap_visible *xlrec = (xl_heap_visible *) rec;
 
-		appendStringInfo(buf, "cutoff xid %u", xlrec->cutoff_xid);
+		appendStringInfo(buf, "cutoff xid %u flags %d",
+						 xlrec->cutoff_xid, xlrec->flags);
 	}
 	else if (info == XLOG_HEAP2_MULTI_INSERT)
 	{

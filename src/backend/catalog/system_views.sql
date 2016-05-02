@@ -1,7 +1,7 @@
 /*
  * PostgreSQL System Views
  *
- * Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Copyright (c) 1996-2016, PostgreSQL Global Development Group
  *
  * src/backend/catalog/system_views.sql
  *
@@ -433,6 +433,12 @@ CREATE VIEW pg_timezone_abbrevs AS
 CREATE VIEW pg_timezone_names AS
     SELECT * FROM pg_timezone_names();
 
+CREATE VIEW pg_config AS
+    SELECT * FROM pg_config();
+
+REVOKE ALL on pg_config FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION pg_config() FROM PUBLIC;
+
 -- Statistics views
 
 CREATE VIEW pg_stat_all_tables AS
@@ -630,7 +636,8 @@ CREATE VIEW pg_stat_activity AS
             S.xact_start,
             S.query_start,
             S.state_change,
-            S.waiting,
+            S.wait_event_type,
+            S.wait_event,
             S.state,
             S.backend_xid,
             s.backend_xmin,
@@ -661,6 +668,22 @@ CREATE VIEW pg_stat_replication AS
             pg_stat_get_wal_senders() AS W
     WHERE S.usesysid = U.oid AND
             S.pid = W.pid;
+
+CREATE VIEW pg_stat_wal_receiver AS
+    SELECT
+            s.pid,
+            s.status,
+            s.receive_start_lsn,
+            s.receive_start_tli,
+            s.received_lsn,
+            s.received_tli,
+            s.last_msg_send_time,
+            s.last_msg_receipt_time,
+            s.latest_end_lsn,
+            s.latest_end_time,
+            s.slot_name
+    FROM pg_stat_get_wal_receiver() s
+    WHERE s.pid IS NOT NULL;
 
 CREATE VIEW pg_stat_ssl AS
     SELECT
@@ -773,6 +796,24 @@ CREATE VIEW pg_stat_bgwriter AS
         pg_stat_get_buf_alloc() AS buffers_alloc,
         pg_stat_get_bgwriter_stat_reset_time() AS stats_reset;
 
+CREATE VIEW pg_stat_progress_vacuum AS
+	SELECT
+		S.pid AS pid, S.datid AS datid, D.datname AS datname,
+		S.relid AS relid,
+		CASE S.param1 WHEN 0 THEN 'initializing'
+					  WHEN 1 THEN 'scanning heap'
+					  WHEN 2 THEN 'vacuuming indexes'
+					  WHEN 3 THEN 'vacuuming heap'
+					  WHEN 4 THEN 'cleaning up indexes'
+					  WHEN 5 THEN 'truncating heap'
+					  WHEN 6 THEN 'performing final cleanup'
+					  END AS phase,
+		S.param2 AS heap_blks_total, S.param3 AS heap_blks_scanned,
+		S.param4 AS heap_blks_vacuumed, S.param5 AS index_vacuum_count,
+		S.param6 AS max_dead_tuples, S.param7 AS num_dead_tuples
+    FROM pg_stat_get_progress_info('VACUUM') AS S
+		 JOIN pg_database D ON S.datid = D.oid;
+
 CREATE VIEW pg_user_mappings AS
     SELECT
         U.oid       AS umid,
@@ -880,8 +921,9 @@ COMMENT ON FUNCTION ts_debug(text) IS
 --
 
 CREATE OR REPLACE FUNCTION
-  pg_start_backup(label text, fast boolean DEFAULT false)
-  RETURNS pg_lsn STRICT VOLATILE LANGUAGE internal AS 'pg_start_backup';
+  pg_start_backup(label text, fast boolean DEFAULT false, exclusive boolean DEFAULT true)
+  RETURNS pg_lsn STRICT VOLATILE LANGUAGE internal AS 'pg_start_backup'
+  PARALLEL RESTRICTED;
 
 -- legacy definition for compatibility with 9.3
 CREATE OR REPLACE FUNCTION
@@ -930,6 +972,7 @@ CREATE OR REPLACE FUNCTION pg_create_physical_replication_slot(
     OUT slot_name name, OUT xlog_position pg_lsn)
 RETURNS RECORD
 LANGUAGE INTERNAL
+STRICT VOLATILE
 AS 'pg_create_physical_replication_slot';
 
 CREATE OR REPLACE FUNCTION
@@ -948,3 +991,39 @@ RETURNS jsonb
 LANGUAGE INTERNAL
 STRICT IMMUTABLE
 AS 'jsonb_set';
+
+CREATE OR REPLACE FUNCTION
+  parse_ident(str text, strict boolean DEFAULT true)
+RETURNS text[]
+LANGUAGE INTERNAL
+STRICT IMMUTABLE
+AS 'parse_ident';
+
+CREATE OR REPLACE FUNCTION
+  jsonb_insert(jsonb_in jsonb, path text[] , replacement jsonb,
+            insert_after boolean DEFAULT false)
+RETURNS jsonb
+LANGUAGE INTERNAL
+STRICT IMMUTABLE
+AS 'jsonb_insert';
+
+-- The default permissions for functions mean that anyone can execute them.
+-- A number of functions shouldn't be executable by just anyone, but rather
+-- than use explicit 'superuser()' checks in those functions, we use the GRANT
+-- system to REVOKE access to those functions at initdb time.  Administrators
+-- can later change who can access these functions, or leave them as only
+-- available to superuser / cluster owner, if they choose.
+REVOKE EXECUTE ON FUNCTION pg_start_backup(text, boolean, boolean) FROM public;
+REVOKE EXECUTE ON FUNCTION pg_stop_backup() FROM public;
+REVOKE EXECUTE ON FUNCTION pg_stop_backup(boolean) FROM public;
+REVOKE EXECUTE ON FUNCTION pg_create_restore_point(text) FROM public;
+REVOKE EXECUTE ON FUNCTION pg_switch_xlog() FROM public;
+REVOKE EXECUTE ON FUNCTION pg_xlog_replay_pause() FROM public;
+REVOKE EXECUTE ON FUNCTION pg_xlog_replay_resume() FROM public;
+REVOKE EXECUTE ON FUNCTION pg_rotate_logfile() FROM public;
+REVOKE EXECUTE ON FUNCTION pg_reload_conf() FROM public;
+
+REVOKE EXECUTE ON FUNCTION pg_stat_reset() FROM public;
+REVOKE EXECUTE ON FUNCTION pg_stat_reset_shared(text) FROM public;
+REVOKE EXECUTE ON FUNCTION pg_stat_reset_single_table_counters(oid) FROM public;
+REVOKE EXECUTE ON FUNCTION pg_stat_reset_single_function_counters(oid) FROM public;

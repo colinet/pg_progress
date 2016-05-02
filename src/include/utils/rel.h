@@ -4,7 +4,7 @@
  *	  POSTGRES relation descriptor (a/k/a relcache entry) definitions.
  *
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/utils/rel.h
@@ -15,7 +15,7 @@
 #define REL_H
 
 #include "access/tupdesc.h"
-#include "catalog/pg_am.h"
+#include "access/xlog.h"
 #include "catalog/pg_class.h"
 #include "catalog/pg_index.h"
 #include "fmgr.h"
@@ -45,23 +45,6 @@ typedef struct LockInfoData
 
 typedef LockInfoData *LockInfo;
 
-
-/*
- * Cached lookup information for the frequently used index access method
- * functions, defined by the pg_am row associated with an index relation.
- */
-typedef struct RelationAmInfo
-{
-	FmgrInfo	aminsert;
-	FmgrInfo	ambeginscan;
-	FmgrInfo	amgettuple;
-	FmgrInfo	amgetbitmap;
-	FmgrInfo	amrescan;
-	FmgrInfo	amendscan;
-	FmgrInfo	ammarkpos;
-	FmgrInfo	amrestrpos;
-	FmgrInfo	amcanreturn;
-} RelationAmInfo;
 
 /*
  * Here are the contents of a relation cache entry.
@@ -112,6 +95,9 @@ typedef struct RelationData
 	Oid			rd_oidindex;	/* OID of unique index on OID, if any */
 	Oid			rd_replidindex; /* OID of replica identity index, if any */
 
+	/* data managed by RelationGetFKList: */
+	List	   *rd_fkeylist;		/* OIDs of foreign keys */
+
 	/* data managed by RelationGetIndexAttrBitmap: */
 	Bitmapset  *rd_indexattr;	/* identifies columns used in indexes */
 	Bitmapset  *rd_keyattr;		/* cols that can be ref'd by foreign keys */
@@ -128,7 +114,6 @@ typedef struct RelationData
 	Form_pg_index rd_index;		/* pg_index tuple describing this index */
 	/* use "struct" here to avoid needing to include htup.h: */
 	struct HeapTupleData *rd_indextuple;		/* all of pg_index tuple */
-	Form_pg_am	rd_am;			/* pg_am tuple for index's AM */
 
 	/*
 	 * index access support info (used only for an index relation)
@@ -145,8 +130,10 @@ typedef struct RelationData
 	 * rd_indexcxt.  A relcache reset will include freeing that chunk and
 	 * setting rd_amcache = NULL.
 	 */
+	Oid			rd_amhandler;	/* OID of index AM's handler function */
 	MemoryContext rd_indexcxt;	/* private memory cxt for this stuff */
-	RelationAmInfo *rd_aminfo;	/* lookup info for funcs found in pg_am */
+	/* use "struct" here to avoid needing to include amapi.h: */
+	struct IndexAmRoutine *rd_amroutine;		/* index AM's API struct */
 	Oid		   *rd_opfamily;	/* OIDs of op families for each index col */
 	Oid		   *rd_opcintype;	/* OIDs of opclass declared input data types */
 	RegProcedure *rd_support;	/* OIDs of support procedures */
@@ -220,6 +207,7 @@ typedef struct StdRdOptions
 	AutoVacOpts autovacuum;		/* autovacuum-related options */
 	bool		user_catalog_table;		/* use as an additional catalog
 										 * relation */
+	int			parallel_degree;	/* max number of parallel workers */
 } StdRdOptions;
 
 #define HEAP_MIN_FILLFACTOR			10
@@ -255,6 +243,14 @@ typedef struct StdRdOptions
 #define RelationIsUsedAsCatalogTable(relation)	\
 	((relation)->rd_options ?				\
 	 ((StdRdOptions *) (relation)->rd_options)->user_catalog_table : false)
+
+/*
+ * RelationGetParallelDegree
+ *		Returns the relation's parallel_degree.  Note multiple eval of argument!
+ */
+#define RelationGetParallelDegree(relation, defaultpd) \
+	((relation)->rd_options ? \
+	 ((StdRdOptions *) (relation)->rd_options)->parallel_degree : (defaultpd))
 
 
 /*

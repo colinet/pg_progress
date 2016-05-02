@@ -3,7 +3,7 @@
  * findtimezone.c
  *	  Functions for determining the default timezone to use.
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/bin/initdb/findtimezone.c
@@ -99,15 +99,15 @@ pg_load_tz(const char *name)
 	 */
 	if (strcmp(name, "GMT") == 0)
 	{
-		if (tzparse(name, &tz.state, TRUE) != 0)
+		if (!tzparse(name, &tz.state, true))
 		{
 			/* This really, really should not happen ... */
 			return NULL;
 		}
 	}
-	else if (tzload(name, NULL, &tz.state, TRUE) != 0)
+	else if (tzload(name, NULL, &tz.state, true) != 0)
 	{
-		if (name[0] == ':' || tzparse(name, &tz.state, FALSE) != 0)
+		if (name[0] == ':' || !tzparse(name, &tz.state, false))
 		{
 			return NULL;		/* unknown timezone */
 		}

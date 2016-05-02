@@ -2,7 +2,7 @@
  *
  * dropuser
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/bin/scripts/dropuser.c
@@ -12,7 +12,7 @@
 
 #include "postgres_fe.h"
 #include "common.h"
-#include "dumputils.h"
+#include "fe_utils/string_utils.h"
 
 
 static void help(const char *progname);
@@ -128,8 +128,8 @@ main(int argc, char *argv[])
 	appendPQExpBuffer(&sql, "DROP ROLE %s%s;",
 					  (if_exists ? "IF EXISTS " : ""), fmtId(dropuser));
 
-	conn = connectDatabase("postgres", host, port, username, NULL,
-						   prompt_password, progname, false);
+	conn = connectDatabase("postgres", host, port, username, prompt_password,
+						   progname, false, false);
 
 	if (echo)
 		printf("%s\n", sql.data);

@@ -182,7 +182,7 @@
   </sect1>
 
   <sect1 id="functions-comparison">
-   <title>Comparison Operators</title>
+   <title>Comparison Functions and Operators</title>
 
    <indexterm zone="functions-comparison">
     <primary>comparison</primary>
@@ -190,11 +190,11 @@
    </indexterm>
 
    <para>
-    The usual comparison operators are available, shown in <xref
-    linkend="functions-comparison-table">.
+    The usual comparison operators are available, as shown in <xref
+    linkend="functions-comparison-op-table">.
    </para>
 
-   <table id="functions-comparison-table">
+   <table id="functions-comparison-op-table">
     <title>Comparison Operators</title>
     <tgroup cols="2">
      <thead>
@@ -437,6 +437,49 @@
    </para>
 -->
 
+   <para>
+    Some comparison-related functions are also available, as shown in <xref
+    linkend="functions-comparison-func-table">.
+   </para>
+
+  <table id="functions-comparison-func-table">
+    <title>Comparison Functions</title>
+    <tgroup cols="4">
+     <thead>
+      <row>
+       <entry>Function</entry>
+       <entry>Description</entry>
+       <entry>Example</entry>
+       <entry>Example Result</entry>
+      </row>
+     </thead>
+     <tbody>
+      <row>
+       <entry>
+         <indexterm>
+          <primary>num_nonnulls</primary>
+         </indexterm>
+         <literal>num_nonnulls(VARIADIC "any")</literal>
+       </entry>
+       <entry>returns the number of non-NULL arguments</entry>
+       <entry><literal>num_nonnulls(1, NULL, 2)</literal></entry>
+       <entry><literal>2</literal></entry>
+      </row>
+      <row>
+       <entry>
+         <indexterm>
+          <primary>num_nulls</primary>
+         </indexterm>
+         <literal>num_nulls(VARIADIC "any")</literal>
+       </entry>
+       <entry>returns the number of NULL arguments</entry>
+       <entry><literal>num_nulls(1, NULL, 2)</literal></entry>
+       <entry><literal>1</literal></entry>
+      </row>
+     </tbody>
+    </tgroup>
+   </table>
+
   </sect1>
 
   <sect1 id="functions-math">
@@ -505,7 +548,7 @@
 
       <row>
        <entry> <literal>^</literal> </entry>
-       <entry>exponentiation</entry>
+       <entry>exponentiation (associates left to right)</entry>
        <entry><literal>2.0 ^ 3.0</literal></entry>
        <entry><literal>8</literal></entry>
       </row>
@@ -852,6 +895,19 @@
       <row>
        <entry>
         <indexterm>
+         <primary>scale</primary>
+        </indexterm>
+        <literal><function>scale(<type>numeric</type>)</function></literal>
+       </entry>
+       <entry><type>numeric</type></entry>
+       <entry>scale of the argument (the number of decimal digits in the fractional part)</entry>
+       <entry><literal>scale(8.41)</literal></entry>
+       <entry><literal>2</literal></entry>
+      </row>
+
+      <row>
+       <entry>
+        <indexterm>
          <primary>sign</primary>
         </indexterm>
         <literal><function>sign(<type>dp</type> or <type>numeric</type>)</function></literal>
@@ -993,20 +1049,19 @@
    Finally, <xref linkend="functions-math-trig-table"> shows the
    available trigonometric functions.  All trigonometric functions
    take arguments and return values of type <type>double
-   precision</type>. Trigonometric functions arguments are expressed
-   in radians. Inverse functions return values are expressed in
-   radians.  See unit transformation functions
-   <literal><function>radians()</function></literal> and
-   <literal><function>degrees()</function></literal> above.
+   precision</type>.  Each of the trigonometric functions comes in
+   two variants, one that measures angles in radians and one that
+   measures angles in degrees.
   </para>
 
    <table id="functions-math-trig-table">
     <title>Trigonometric Functions</title>
 
-    <tgroup cols="2">
+    <tgroup cols="3">
      <thead>
       <row>
-       <entry>Function</entry>
+       <entry>Function (radians)</entry>
+       <entry>Function (degrees)</entry>
        <entry>Description</entry>
       </row>
      </thead>
@@ -1018,6 +1073,11 @@
          <primary>acos</primary>
         </indexterm><literal><function>acos(<replaceable>x</replaceable>)</function></literal>
        </entry>
+       <entry>
+        <indexterm>
+         <primary>acosd</primary>
+        </indexterm><literal><function>acosd(<replaceable>x</replaceable>)</function></literal>
+       </entry>
        <entry>inverse cosine</entry>
       </row>
 
@@ -1027,6 +1087,12 @@
          <primary>asin</primary>
         </indexterm>
         <literal><function>asin(<replaceable>x</replaceable>)</function></literal>
+       </entry>
+       <entry>
+        <indexterm>
+         <primary>asind</primary>
+        </indexterm>
+        <literal><function>asind(<replaceable>x</replaceable>)</function></literal>
        </entry>
        <entry>inverse sine</entry>
       </row>
@@ -1038,6 +1104,12 @@
         </indexterm>
         <literal><function>atan(<replaceable>x</replaceable>)</function></literal>
        </entry>
+       <entry>
+        <indexterm>
+         <primary>atand</primary>
+        </indexterm>
+        <literal><function>atand(<replaceable>x</replaceable>)</function></literal>
+       </entry>
        <entry>inverse tangent</entry>
       </row>
 
@@ -1047,6 +1119,13 @@
          <primary>atan2</primary>
         </indexterm>
         <literal><function>atan2(<replaceable>y</replaceable>,
+        <replaceable>x</replaceable>)</function></literal>
+       </entry>
+       <entry>
+        <indexterm>
+         <primary>atan2d</primary>
+        </indexterm>
+        <literal><function>atan2d(<replaceable>y</replaceable>,
         <replaceable>x</replaceable>)</function></literal>
        </entry>
        <entry>inverse tangent of
@@ -1060,6 +1139,12 @@
         </indexterm>
         <literal><function>cos(<replaceable>x</replaceable>)</function></literal>
        </entry>
+       <entry>
+        <indexterm>
+         <primary>cosd</primary>
+        </indexterm>
+        <literal><function>cosd(<replaceable>x</replaceable>)</function></literal>
+       </entry>
        <entry>cosine</entry>
       </row>
 
@@ -1069,6 +1154,12 @@
          <primary>cot</primary>
         </indexterm>
         <literal><function>cot(<replaceable>x</replaceable>)</function></literal>
+       </entry>
+       <entry>
+        <indexterm>
+         <primary>cotd</primary>
+        </indexterm>
+        <literal><function>cotd(<replaceable>x</replaceable>)</function></literal>
        </entry>
        <entry>cotangent</entry>
       </row>
@@ -1080,6 +1171,12 @@
         </indexterm>
         <literal><function>sin(<replaceable>x</replaceable>)</function></literal>
        </entry>
+       <entry>
+        <indexterm>
+         <primary>sind</primary>
+        </indexterm>
+        <literal><function>sind(<replaceable>x</replaceable>)</function></literal>
+       </entry>
        <entry>sine</entry>
       </row>
 
@@ -1090,11 +1187,28 @@
         </indexterm>
         <literal><function>tan(<replaceable>x</replaceable>)</function></literal>
        </entry>
+       <entry>
+        <indexterm>
+         <primary>tand</primary>
+        </indexterm>
+        <literal><function>tand(<replaceable>x</replaceable>)</function></literal>
+       </entry>
        <entry>tangent</entry>
       </row>
      </tbody>
     </tgroup>
    </table>
+
+  <note>
+   <para>
+    Another way to work with angles measured in degrees is to use the unit
+    transformation functions <literal><function>radians()</function></literal>
+    and <literal><function>degrees()</function></literal> shown earlier.
+    However, using the degree-based trigonometric functions is preferred,
+    as that way avoids roundoff error for special cases such
+    as <literal>sind(30)</>.
+   </para>
+  </note>
 
   </sect1>
 
@@ -1702,6 +1816,29 @@
        </entry>
        <entry><literal>md5('abc')</literal></entry>
        <entry><literal>900150983cd24fb0 d6963f7d28e17f72</literal></entry>
+      </row>
+
+      <row>
+       <entry>
+        <indexterm>
+         <primary>parse_ident</primary>
+        </indexterm>
+        <literal><function>parse_ident(<parameter>qualified_identifier</parameter> <type>text</type>
+           [, <parameter>strictmode</parameter> <type>boolean</type> DEFAULT true ] )</function></literal>
+       </entry>
+       <entry><type>text[]</type></entry>
+       <entry>
+        Split <parameter>qualified_identifier</parameter> into an array of
+        identifiers, removing any quoting of individual identifiers.  By
+        default, extra characters after the last identifier are considered an
+        error; but if the second parameter is <literal>false</>, then such
+        extra characters are ignored. (This behavior is useful for parsing
+        names for objects like functions.) Note that this function does not
+        truncate over-length identifiers. If you want truncation you can cast
+        the result to <type>name[]</>.
+       </entry>
+       <entry><literal>parse_ident('"SomeSchema".someTable')</literal></entry>
+       <entry><literal>{SomeSchema,sometable}</literal></entry>
       </row>
 
       <row>
@@ -5442,15 +5579,6 @@ SELECT regexp_matches('abc01234xyz', '(?:(.*?)(\d+)(.*)){1,1}');
     argument is the value to be formatted and the second argument is a
     template that defines the output or input format.
    </para>
-   <para>
-    A single-argument <function>to_timestamp</function> function is also
-    available;  it accepts a
-    <type>double precision</type> argument and converts from Unix epoch
-    (seconds since 1970-01-01 00:00:00+00) to
-    <type>timestamp with time zone</type>.
-    (<type>Integer</type> Unix epochs are implicitly cast to
-    <type>double precision</type>.)
-   </para>
 
     <table id="functions-formatting-table">
      <title>Formatting Functions</title>
@@ -5533,15 +5661,16 @@ SELECT regexp_matches('abc01234xyz', '(?:(.*?)(\d+)(.*)){1,1}');
         <entry>convert string to time stamp</entry>
         <entry><literal>to_timestamp('05&nbsp;Dec&nbsp;2000', 'DD&nbsp;Mon&nbsp;YYYY')</literal></entry>
        </row>
-       <row>
-        <entry><literal><function>to_timestamp(<type>double precision</type>)</function></literal></entry>
-        <entry><type>timestamp with time zone</type></entry>
-        <entry>convert Unix epoch to time stamp</entry>
-        <entry><literal>to_timestamp(1284352323)</literal></entry>
-       </row>
       </tbody>
      </tgroup>
     </table>
+
+   <note>
+    <para>
+     There is also a single-argument <function>to_timestamp</function>
+     function; see <xref linkend="functions-datetime-table">.
+    </para>
+   </note>
 
    <para>
     In a <function>to_char</> output template string, there are certain
@@ -6923,8 +7052,8 @@ SELECT regexp_matches('abc01234xyz', '(?:(.*?)(\d+)(.*)){1,1}');
         <entry><type>timestamp with time zone</type></entry>
         <entry>
          Create timestamp with time zone from year, month, day, hour, minute
-         and seconds fields. When <parameter>timezone</parameter> is not specified,
-         then current time zone is used.
+         and seconds fields; if <parameter>timezone</parameter> is not
+         specified, the current time zone is used
         </entry>
         <entry><literal>make_timestamptz(2013, 7, 15, 8, 15, 23.5)</literal></entry>
         <entry><literal>2013-07-15 08:15:23.5+01</literal></entry>
@@ -6989,6 +7118,19 @@ SELECT regexp_matches('abc01234xyz', '(?:(.*?)(\d+)(.*)){1,1}');
         </entry>
         <entry></entry>
         <entry></entry>
+       </row>
+       <row>
+        <entry>
+         <indexterm>
+          <primary>to_timestamp</primary>
+         </indexterm>
+         <literal><function>to_timestamp(<type>double precision</type>)</function></literal>
+        </entry>
+        <entry><type>timestamp with time zone</type></entry>
+        <entry>Convert Unix epoch (seconds since 1970-01-01 00:00:00+00) to
+         timestamp</entry>
+        <entry><literal>to_timestamp(1284352323)</literal></entry>
+        <entry><literal>2010-09-13 04:32:03+00</literal></entry>
        </row>
       </tbody>
      </tgroup>
@@ -7240,16 +7382,13 @@ SELECT EXTRACT(EPOCH FROM INTERVAL '5 days 3 hours');
 </screen>
 
        <para>
-        Here is how you can convert an epoch value back to a time
-        stamp:
+        You can convert an epoch value back to a time stamp
+        with <function>to_timestamp</>:
        </para>
 <screen>
-SELECT TIMESTAMP WITH TIME ZONE 'epoch' + 982384720.12 * INTERVAL '1 second';
+SELECT to_timestamp(982384720.12);
+<lineannotation>Result: </lineannotation><computeroutput>2001-02-17 04:38:40.12+00</computeroutput>
 </screen>
-       <para>
-        (The <function>to_timestamp</> function encapsulates the above
-        conversion.)
-       </para>
       </listitem>
      </varlistentry>
 
@@ -7507,6 +7646,17 @@ SELECT EXTRACT(YEAR FROM TIMESTAMP '2001-02-16 20:38:40');
 
     </variablelist>
    </para>
+
+   <note>
+    <para>
+     When the input value is +/-Infinity, <function>extract</> returns
+     +/-Infinity for monotonically-increasing fields (<literal>epoch</>,
+     <literal>julian</>, <literal>year</>, <literal>isoyear</>,
+     <literal>decade</>, <literal>century</>, and <literal>millennium</>).
+     For other fields, NULL is returned.  <productname>PostgreSQL</>
+     versions before 9.6 returned zero for all cases of infinite input.
+    </para>
+   </note>
 
    <para>
     The <function>extract</function> function is primarily intended
@@ -8978,6 +9128,12 @@ CREATE TYPE rainbow AS ENUM ('red', 'orange', 'yellow', 'green', 'blue', 'purple
         <entry><literal>!'cat'</literal></entry>
        </row>
        <row>
+        <entry> <literal>&lt;-&gt;</literal> </entry>
+        <entry><type>tsquery</> followed by <type>tsquery</></entry>
+        <entry><literal>to_tsquery('fat') &lt;-&gt; to_tsquery('rat')</literal></entry>
+        <entry><literal>'fat' &lt;-&gt; 'rat'</literal></entry>
+       </row>
+       <row>
         <entry> <literal>@&gt;</literal> </entry>
         <entry><type>tsquery</> contains another ?</entry>
         <entry><literal>'cat'::tsquery @&gt; 'cat &amp; rat'::tsquery</literal></entry>
@@ -9072,6 +9228,18 @@ CREATE TYPE rainbow AS ENUM ('red', 'orange', 'yellow', 'green', 'blue', 'purple
        <row>
         <entry>
          <indexterm>
+          <primary>phraseto_tsquery</primary>
+         </indexterm>
+         <literal><function>phraseto_tsquery(<optional> <replaceable class="PARAMETER">config</> <type>regconfig</> , </optional> <replaceable class="PARAMETER">query</> <type>text</type>)</function></literal>
+        </entry>
+        <entry><type>tsquery</type></entry>
+        <entry>produce <type>tsquery</> ignoring punctuation</entry>
+        <entry><literal>phraseto_tsquery('english', 'The Fat Rats')</literal></entry>
+        <entry><literal>'fat' &lt;-&gt; 'rat'</literal></entry>
+       </row>
+       <row>
+        <entry>
+         <indexterm>
           <primary>querytree</primary>
          </indexterm>
          <literal><function>querytree(<replaceable class="PARAMETER">query</replaceable> <type>tsquery</>)</function></literal>
@@ -9086,12 +9254,25 @@ CREATE TYPE rainbow AS ENUM ('red', 'orange', 'yellow', 'green', 'blue', 'purple
          <indexterm>
           <primary>setweight</primary>
          </indexterm>
-         <literal><function>setweight(<type>tsvector</>, <type>"char"</>)</function></literal>
+         <literal><function>setweight(<replaceable class="PARAMETER">vector</replaceable> <type>tsvector</>, <replaceable class="PARAMETER">weight</replaceable> <type>"char"</>)</function></literal>
         </entry>
         <entry><type>tsvector</type></entry>
-        <entry>assign weight to each element of <type>tsvector</></entry>
+        <entry>assign <replaceable class="PARAMETER">weight</replaceable> to each element of <replaceable class="PARAMETER">vector</replaceable></entry>
         <entry><literal>setweight('fat:2,4 cat:3 rat:5B'::tsvector, 'A')</literal></entry>
         <entry><literal>'cat':3A 'fat':2A,4A 'rat':5A</literal></entry>
+       </row>
+       <row>
+        <entry>
+         <indexterm>
+          <primary>setweight</primary>
+          <secondary>setweight for specific lexeme(s)</secondary>
+         </indexterm>
+         <literal><function>setweight(<replaceable class="PARAMETER">vector</replaceable> <type>tsvector</>, <replaceable class="PARAMETER">weight</replaceable> <type>"char"</>, <replaceable class="PARAMETER">lexemes</replaceable> <type>"text"[]</>)</function></literal>
+        </entry>
+        <entry><type>tsvector</type></entry>
+        <entry>assign <replaceable class="PARAMETER">weight</replaceable> to elements of <replaceable class="PARAMETER">vector</replaceable> that are listed in <replaceable class="PARAMETER">lexemes</replaceable> array</entry>
+        <entry><literal>setweight('fat:2,4 cat:3 rat:5B'::tsvector, 'A', '{cat,rat}')</literal></entry>
+        <entry><literal>'cat':3A 'fat':2,4 'rat':5A</literal></entry>
        </row>
        <row>
         <entry>
@@ -9104,6 +9285,79 @@ CREATE TYPE rainbow AS ENUM ('red', 'orange', 'yellow', 'green', 'blue', 'purple
         <entry>remove positions and weights from <type>tsvector</></entry>
         <entry><literal>strip('fat:2,4 cat:3 rat:5A'::tsvector)</literal></entry>
         <entry><literal>'cat' 'fat' 'rat'</literal></entry>
+       </row>
+       <row>
+        <entry>
+         <indexterm>
+          <primary>delete</primary>
+          <secondary>delete lexeme(s) from tsvector</secondary>
+         </indexterm>
+         <literal><function>delete(<replaceable class="PARAMETER">vector</replaceable> <type>tsvector</>, <replaceable class="PARAMETER">lexeme</replaceable> <type>text</>)</function></literal>
+        </entry>
+        <entry><type>tsvector</type></entry>
+        <entry>remove given <replaceable class="PARAMETER">lexeme</replaceable> from <replaceable class="PARAMETER">vector</replaceable></entry>
+        <entry><literal>delete('fat:2,4 cat:3 rat:5A'::tsvector, 'fat')</literal></entry>
+        <entry><literal>'cat':3 'rat':5A</literal></entry>
+       </row>
+       <row>
+        <entry>
+         <!-- previous indexterm entry covers this too -->
+         <literal><function>delete(<replaceable class="PARAMETER">vector</replaceable> <type>tsvector</>, <replaceable class="PARAMETER">lexemes</replaceable> <type>text[]</>)</function></literal>
+        </entry>
+        <entry><type>tsvector</type></entry>
+        <entry>remove any occurrence of lexemes in <replaceable class="PARAMETER">lexemes</replaceable> array from <replaceable class="PARAMETER">vector</replaceable></entry>
+        <entry><literal>delete('fat:2,4 cat:3 rat:5A'::tsvector, ARRAY['fat','rat'])</literal></entry>
+        <entry><literal>'cat':3</literal></entry>
+       </row>
+       <row>
+        <entry>
+         <indexterm>
+          <primary>unnest</primary>
+          <secondary>for tsvector</secondary>
+         </indexterm>
+         <literal><function>unnest(<type>tsvector</>, OUT <replaceable class="PARAMETER">lexeme</> <type>text</>, OUT <replaceable class="PARAMETER">positions</> <type>smallint[]</>, OUT <replaceable class="PARAMETER">weights</> <type>text</>)</function></literal>
+        </entry>
+        <entry><type>setof record</type></entry>
+        <entry>expand a tsvector to a set of rows</entry>
+        <entry><literal>unnest('fat:2,4 cat:3 rat:5A'::tsvector)</literal></entry>
+        <entry><literal>(cat,{3},{D}) ...</literal></entry>
+       </row>
+       <row>
+        <entry>
+         <indexterm>
+          <primary>tsvector_to_array</primary>
+         </indexterm>
+         <literal><function>tsvector_to_array(<type>tsvector</>)</function></literal>
+        </entry>
+        <entry><type>text[]</type></entry>
+        <entry>convert <type>tsvector</> to array of lexemes</entry>
+        <entry><literal>tsvector_to_array('fat:2,4 cat:3 rat:5A'::tsvector)</literal></entry>
+        <entry><literal>{cat,fat,rat}</literal></entry>
+       </row>
+       <row>
+        <entry>
+         <indexterm>
+          <primary>array_to_tsvector</primary>
+         </indexterm>
+         <literal><function>array_to_tsvector(<type>text[]</>)</function></literal>
+        </entry>
+        <entry><type>tsvector</type></entry>
+        <entry>convert array of lexemes to <type>tsvector</type></entry>
+        <entry><literal>array_to_tsvector('{fat,cat,rat}'::text[])</literal></entry>
+        <entry><literal>'fat' 'cat' 'rat'</literal></entry>
+       </row>
+       <row>
+        <entry>
+         <indexterm>
+          <primary>filter</primary>
+          <secondary>for tsvector</secondary>
+         </indexterm>
+         <literal><function>filter(<replaceable class="PARAMETER">vector</replaceable> <type>tsvector</>, <replaceable class="PARAMETER">weights</replaceable> <type>"char"[]</>)</function></literal>
+        </entry>
+        <entry><type>tsvector</type></entry>
+        <entry>Select only elements with given <replaceable class="PARAMETER">weights</replaceable> from <replaceable class="PARAMETER">vector</replaceable></entry>
+        <entry><literal>filter('fat:2,4 cat:3b rat:5A'::tsvector, '{a,b}')</literal></entry>
+        <entry><literal>'cat':3B 'rat':5A</literal></entry>
        </row>
        <row>
         <entry>
@@ -9183,6 +9437,27 @@ CREATE TYPE rainbow AS ENUM ('red', 'orange', 'yellow', 'green', 'blue', 'purple
         <entry>replace using targets and substitutes from a <command>SELECT</> command</entry>
         <entry><literal>SELECT ts_rewrite('a &amp; b'::tsquery, 'SELECT t,s FROM aliases')</literal></entry>
         <entry><literal>'b' &amp; ( 'foo' | 'bar' )</literal></entry>
+       </row>
+       <row>
+        <entry>
+         <indexterm>
+          <primary>tsquery_phrase</primary>
+         </indexterm>
+         <literal><function>tsquery_phrase(<replaceable class="PARAMETER">query1</replaceable> <type>tsquery</>, <replaceable class="PARAMETER">query2</replaceable> <type>tsquery</>)</function></literal>
+        </entry>
+        <entry><type>tsquery</type></entry>
+        <entry>implementation of <literal>&lt;-&gt;</> (FOLLOWED BY) operator</entry>
+        <entry><literal>tsquery_phrase(to_tsquery('fat'), to_tsquery('cat'))</literal></entry>
+        <entry><literal>'fat' &lt;-&gt; 'cat'</literal></entry>
+       </row>
+       <row>
+        <entry>
+         <literal><function>tsquery_phrase(<replaceable class="PARAMETER">query1</replaceable> <type>tsquery</>, <replaceable class="PARAMETER">query2</replaceable> <type>tsquery</>, <replaceable class="PARAMETER">distance</replaceable> <type>integer</>)</function></literal>
+        </entry>
+        <entry><type>tsquery</type></entry>
+        <entry>phrase-concatenate with distance</entry>
+        <entry><literal>tsquery_phrase(to_tsquery('fat'), to_tsquery('cat'), 10)</literal></entry>
+        <entry><literal>'fat' &lt;10&gt; 'cat'</literal></entry>
        </row>
        <row>
         <entry>
@@ -10307,7 +10582,7 @@ table2-mapping
   </note>
   <para>
    The standard comparison operators shown in  <xref
-   linkend="functions-comparison-table"> are available for
+   linkend="functions-comparison-op-table"> are available for
    <type>jsonb</type>, but not for <type>json</type>. They follow the
    ordering rules for B-tree operations outlined at <xref
    linkend="json-indexing">.
@@ -10666,6 +10941,9 @@ table2-mapping
    <primary>jsonb_set</primary>
   </indexterm>
   <indexterm>
+   <primary>jsonb_insert</primary>
+  </indexterm>
+  <indexterm>
    <primary>jsonb_pretty</primary>
   </indexterm>
 
@@ -10947,6 +11225,39 @@ table2-mapping
         </para></entry>
        </row>
       <row>
+       <entry>
+           <para><literal>
+           jsonb_insert(target jsonb, path text[], new_value jsonb, <optional><parameter>insert_after</parameter> <type>boolean</type></optional>)
+           </literal></para>
+       </entry>
+       <entry><para><type>jsonb</type></para></entry>
+       <entry>
+         Returns <replaceable>target</replaceable> with
+         <replaceable>new_value</replaceable> inserted. If
+         <replaceable>target</replaceable> section designated by
+         <replaceable>path</replaceable> is in a JSONB array,
+         <replaceable>new_value</replaceable> will be inserted before target or
+         after if <replaceable>insert_after</replaceable> is true (default is
+         <literal>false</>). If <replaceable>target</replaceable> section
+         designated by <replaceable>path</replaceable> is in JSONB object,
+         <replaceable>new_value</replaceable> will be inserted only if
+         <replaceable>target</replaceable> does not exist. As with the path
+         orientated operators, negative integers that appear in
+         <replaceable>path</replaceable> count from the end of JSON arrays.
+       </entry>
+       <entry>
+           <para><literal>
+               jsonb_insert('{"a": [0,1,2]}', '{a, 1}', '"new_value"')
+           </literal></para>
+           <para><literal>
+               jsonb_insert('{"a": [0,1,2]}', '{a, 1}', '"new_value"', true)
+           </literal></para>
+       </entry>
+       <entry><para><literal>{"a": [0, "new_value", 1, 2]}</literal>
+         </para><para><literal>{"a": [0, 1, "new_value", 2]}</literal>
+        </para></entry>
+       </row>
+      <row>
        <entry><para><literal>jsonb_pretty(from_json jsonb)</literal>
          </para></entry>
        <entry><para><type>text</type></para></entry>
@@ -10998,10 +11309,11 @@ table2-mapping
   <note>
     <para>
       All the items of the <literal>path</> parameter of <literal>jsonb_set</>
-      must be present in the <literal>target</>, unless
-      <literal>create_missing</> is true, in which case all but the last item
-      must be present. If these conditions are not met the <literal>target</>
-      is returned unchanged.
+      as well as <literal>jsonb_insert</> except the last item must be present
+      in the <literal>target</>. If <literal>create_missing</> is false, all
+      items of the <literal>path</> parameter of <literal>jsonb_set</> must be
+      present. If these conditions are not met the <literal>target</> is
+      returned unchanged.
     </para>
     <para>
       If the last path item is an object key, it will be created if it
@@ -12365,12 +12677,13 @@ NULL baz</literallayout>(3 rows)</entry>
   <table id="functions-aggregate-table">
    <title>General-Purpose Aggregate Functions</title>
 
-   <tgroup cols="4">
+   <tgroup cols="5">
     <thead>
      <row>
       <entry>Function</entry>
       <entry>Argument Type(s)</entry>
       <entry>Return Type</entry>
+      <entry>Partial Mode</entry>
       <entry>Description</entry>
      </row>
     </thead>
@@ -12389,6 +12702,7 @@ NULL baz</literallayout>(3 rows)</entry>
       <entry>
        array of the argument type
       </entry>
+      <entry>No</entry>
       <entry>input values, including nulls, concatenated into an array</entry>
      </row>
 
@@ -12402,6 +12716,7 @@ NULL baz</literallayout>(3 rows)</entry>
       <entry>
        same as argument data type
       </entry>
+      <entry>No</entry>
       <entry>input arrays concatenated into array of one higher dimension
        (inputs must all have same dimensionality,
         and cannot be empty or NULL)</entry>
@@ -12427,6 +12742,7 @@ NULL baz</literallayout>(3 rows)</entry>
        <type>double precision</type> for a floating-point argument,
        otherwise the same as the argument data type
       </entry>
+      <entry>Yes</entry>
       <entry>the average (arithmetic mean) of all input values</entry>
      </row>
 
@@ -12444,6 +12760,7 @@ NULL baz</literallayout>(3 rows)</entry>
       <entry>
         same as argument data type
       </entry>
+      <entry>Yes</entry>
       <entry>the bitwise AND of all non-null input values, or null if none</entry>
      </row>
 
@@ -12461,6 +12778,7 @@ NULL baz</literallayout>(3 rows)</entry>
       <entry>
         same as argument data type
       </entry>
+      <entry>Yes</entry>
       <entry>the bitwise OR of all non-null input values, or null if none</entry>
      </row>
 
@@ -12477,6 +12795,7 @@ NULL baz</literallayout>(3 rows)</entry>
       <entry>
        <type>bool</type>
       </entry>
+      <entry>Yes</entry>
       <entry>true if all input values are true, otherwise false</entry>
      </row>
 
@@ -12493,6 +12812,7 @@ NULL baz</literallayout>(3 rows)</entry>
       <entry>
        <type>bool</type>
       </entry>
+      <entry>Yes</entry>
       <entry>true if at least one input value is true, otherwise false</entry>
      </row>
 
@@ -12505,6 +12825,7 @@ NULL baz</literallayout>(3 rows)</entry>
       </entry>
       <entry></entry>
       <entry><type>bigint</type></entry>
+      <entry>Yes</entry>
       <entry>number of input rows</entry>
      </row>
 
@@ -12512,6 +12833,7 @@ NULL baz</literallayout>(3 rows)</entry>
       <entry><function>count(<replaceable class="parameter">expression</replaceable>)</function></entry>
       <entry>any</entry>
       <entry><type>bigint</type></entry>
+      <entry>Yes</entry>
       <entry>
        number of input rows for which the value of <replaceable
        class="parameter">expression</replaceable> is not null
@@ -12531,6 +12853,7 @@ NULL baz</literallayout>(3 rows)</entry>
       <entry>
        <type>bool</type>
       </entry>
+      <entry>Yes</entry>
       <entry>equivalent to <function>bool_and</function></entry>
      </row>
 
@@ -12547,6 +12870,7 @@ NULL baz</literallayout>(3 rows)</entry>
       <entry>
        <type>json</type>
       </entry>
+      <entry>No</entry>
       <entry>aggregates values as a JSON array</entry>
      </row>
 
@@ -12563,6 +12887,7 @@ NULL baz</literallayout>(3 rows)</entry>
       <entry>
        <type>jsonb</type>
       </entry>
+      <entry>No</entry>
       <entry>aggregates values as a JSON array</entry>
      </row>
 
@@ -12579,6 +12904,7 @@ NULL baz</literallayout>(3 rows)</entry>
       <entry>
        <type>json</type>
       </entry>
+      <entry>No</entry>
       <entry>aggregates name/value pairs as a JSON object</entry>
      </row>
 
@@ -12595,6 +12921,7 @@ NULL baz</literallayout>(3 rows)</entry>
       <entry>
        <type>jsonb</type>
       </entry>
+      <entry>No</entry>
       <entry>aggregates name/value pairs as a JSON object</entry>
      </row>
 
@@ -12608,6 +12935,7 @@ NULL baz</literallayout>(3 rows)</entry>
       <entry>any numeric, string, date/time, network, or enum type,
              or arrays of these types</entry>
       <entry>same as argument type</entry>
+      <entry>Yes</entry>
       <entry>
        maximum value of <replaceable
        class="parameter">expression</replaceable> across all input
@@ -12625,6 +12953,7 @@ NULL baz</literallayout>(3 rows)</entry>
       <entry>any numeric, string, date/time, network, or enum type,
              or arrays of these types</entry>
       <entry>same as argument type</entry>
+      <entry>Yes</entry>
       <entry>
        minimum value of <replaceable
        class="parameter">expression</replaceable> across all input
@@ -12648,6 +12977,7 @@ NULL baz</literallayout>(3 rows)</entry>
       <entry>
        same as argument types
       </entry>
+      <entry>No</entry>
       <entry>input values concatenated into a string, separated by delimiter</entry>
      </row>
 
@@ -12670,6 +13000,7 @@ NULL baz</literallayout>(3 rows)</entry>
        <type>bigint</type> arguments, otherwise the same as the
        argument data type
       </entry>
+      <entry>Yes</entry>
       <entry>sum of <replaceable class="parameter">expression</replaceable> across all input values</entry>
      </row>
 
@@ -12686,6 +13017,7 @@ NULL baz</literallayout>(3 rows)</entry>
       <entry>
        <type>xml</type>
       </entry>
+      <entry>No</entry>
       <entry>concatenation of XML values (see also <xref linkend="functions-xml-xmlagg">)</entry>
      </row>
     </tbody>
@@ -12700,6 +13032,12 @@ NULL baz</literallayout>(3 rows)</entry>
    returns null rather than an empty array when there are no input
    rows.  The <function>coalesce</function> function can be used to
    substitute zero or an empty array for null when necessary.
+  </para>
+
+  <para>
+   Aggregate functions which support <firstterm>Partial Mode</firstterm>
+   are eligible to participate in various optimizations, such as parallel
+   aggregation.
   </para>
 
   <note>
@@ -12785,12 +13123,13 @@ SELECT xmlagg(x) FROM (SELECT x FROM test ORDER BY y DESC) AS tab;
   <table id="functions-aggregate-statistics-table">
    <title>Aggregate Functions for Statistics</title>
 
-   <tgroup cols="4">
+   <tgroup cols="5">
     <thead>
      <row>
       <entry>Function</entry>
       <entry>Argument Type</entry>
       <entry>Return Type</entry>
+      <entry>Partial Mode</entry>
       <entry>Description</entry>
      </row>
     </thead>
@@ -12813,6 +13152,7 @@ SELECT xmlagg(x) FROM (SELECT x FROM test ORDER BY y DESC) AS tab;
       <entry>
        <type>double precision</type>
       </entry>
+      <entry>Yes</entry>
       <entry>correlation coefficient</entry>
      </row>
 
@@ -12833,6 +13173,7 @@ SELECT xmlagg(x) FROM (SELECT x FROM test ORDER BY y DESC) AS tab;
       <entry>
        <type>double precision</type>
       </entry>
+      <entry>Yes</entry>
       <entry>population covariance</entry>
      </row>
 
@@ -12853,6 +13194,7 @@ SELECT xmlagg(x) FROM (SELECT x FROM test ORDER BY y DESC) AS tab;
       <entry>
        <type>double precision</type>
       </entry>
+      <entry>Yes</entry>
       <entry>sample covariance</entry>
      </row>
 
@@ -12869,6 +13211,7 @@ SELECT xmlagg(x) FROM (SELECT x FROM test ORDER BY y DESC) AS tab;
       <entry>
        <type>double precision</type>
       </entry>
+      <entry>Yes</entry>
       <entry>average of the independent variable
       (<literal>sum(<replaceable class="parameter">X</replaceable>)/<replaceable class="parameter">N</replaceable></literal>)</entry>
      </row>
@@ -12886,6 +13229,7 @@ SELECT xmlagg(x) FROM (SELECT x FROM test ORDER BY y DESC) AS tab;
       <entry>
        <type>double precision</type>
       </entry>
+      <entry>Yes</entry>
       <entry>average of the dependent variable
       (<literal>sum(<replaceable class="parameter">Y</replaceable>)/<replaceable class="parameter">N</replaceable></literal>)</entry>
      </row>
@@ -12903,6 +13247,7 @@ SELECT xmlagg(x) FROM (SELECT x FROM test ORDER BY y DESC) AS tab;
       <entry>
        <type>bigint</type>
       </entry>
+      <entry>Yes</entry>
       <entry>number of input rows in which both expressions are nonnull</entry>
      </row>
 
@@ -12922,6 +13267,7 @@ SELECT xmlagg(x) FROM (SELECT x FROM test ORDER BY y DESC) AS tab;
       <entry>
        <type>double precision</type>
       </entry>
+      <entry>Yes</entry>
       <entry>y-intercept of the least-squares-fit linear equation
       determined by the (<replaceable
       class="parameter">X</replaceable>, <replaceable
@@ -12941,6 +13287,7 @@ SELECT xmlagg(x) FROM (SELECT x FROM test ORDER BY y DESC) AS tab;
       <entry>
        <type>double precision</type>
       </entry>
+      <entry>Yes</entry>
       <entry>square of the correlation coefficient</entry>
      </row>
 
@@ -12960,6 +13307,7 @@ SELECT xmlagg(x) FROM (SELECT x FROM test ORDER BY y DESC) AS tab;
       <entry>
        <type>double precision</type>
       </entry>
+      <entry>Yes</entry>
       <entry>slope of the least-squares-fit linear equation determined
       by the (<replaceable class="parameter">X</replaceable>,
       <replaceable class="parameter">Y</replaceable>) pairs</entry>
@@ -12978,6 +13326,7 @@ SELECT xmlagg(x) FROM (SELECT x FROM test ORDER BY y DESC) AS tab;
       <entry>
        <type>double precision</type>
       </entry>
+      <entry>Yes</entry>
       <entry><literal>sum(<replaceable
       class="parameter">X</replaceable>^2) - sum(<replaceable
       class="parameter">X</replaceable>)^2/<replaceable
@@ -12998,6 +13347,7 @@ SELECT xmlagg(x) FROM (SELECT x FROM test ORDER BY y DESC) AS tab;
       <entry>
        <type>double precision</type>
       </entry>
+      <entry>Yes</entry>
       <entry><literal>sum(<replaceable
       class="parameter">X</replaceable>*<replaceable
       class="parameter">Y</replaceable>) - sum(<replaceable
@@ -13021,6 +13371,7 @@ SELECT xmlagg(x) FROM (SELECT x FROM test ORDER BY y DESC) AS tab;
       <entry>
        <type>double precision</type>
       </entry>
+      <entry>Yes</entry>
       <entry><literal>sum(<replaceable
       class="parameter">Y</replaceable>^2) - sum(<replaceable
       class="parameter">Y</replaceable>)^2/<replaceable
@@ -13047,6 +13398,7 @@ SELECT xmlagg(x) FROM (SELECT x FROM test ORDER BY y DESC) AS tab;
        <type>double precision</type> for floating-point arguments,
        otherwise <type>numeric</type>
       </entry>
+      <entry>Yes</entry>
       <entry>historical alias for <function>stddev_samp</function></entry>
      </row>
 
@@ -13070,6 +13422,7 @@ SELECT xmlagg(x) FROM (SELECT x FROM test ORDER BY y DESC) AS tab;
        <type>double precision</type> for floating-point arguments,
        otherwise <type>numeric</type>
       </entry>
+      <entry>Yes</entry>
       <entry>population standard deviation of the input values</entry>
      </row>
 
@@ -13093,6 +13446,7 @@ SELECT xmlagg(x) FROM (SELECT x FROM test ORDER BY y DESC) AS tab;
        <type>double precision</type> for floating-point arguments,
        otherwise <type>numeric</type>
       </entry>
+      <entry>Yes</entry>
       <entry>sample standard deviation of the input values</entry>
      </row>
 
@@ -13112,6 +13466,7 @@ SELECT xmlagg(x) FROM (SELECT x FROM test ORDER BY y DESC) AS tab;
        <type>double precision</type> for floating-point arguments,
        otherwise <type>numeric</type>
       </entry>
+      <entry>Yes</entry>
       <entry>historical alias for <function>var_samp</function></entry>
      </row>
 
@@ -13135,6 +13490,7 @@ SELECT xmlagg(x) FROM (SELECT x FROM test ORDER BY y DESC) AS tab;
        <type>double precision</type> for floating-point arguments,
        otherwise <type>numeric</type>
       </entry>
+      <entry>Yes</entry>
       <entry>population variance of the input values (square of the population standard deviation)</entry>
      </row>
 
@@ -13158,6 +13514,7 @@ SELECT xmlagg(x) FROM (SELECT x FROM test ORDER BY y DESC) AS tab;
        <type>double precision</type> for floating-point arguments,
        otherwise <type>numeric</type>
       </entry>
+      <entry>Yes</entry>
       <entry>sample variance of the input values (square of the sample standard deviation)</entry>
      </row>
     </tbody>
@@ -13182,13 +13539,14 @@ SELECT xmlagg(x) FROM (SELECT x FROM test ORDER BY y DESC) AS tab;
   <table id="functions-orderedset-table">
    <title>Ordered-Set Aggregate Functions</title>
 
-   <tgroup cols="5">
+   <tgroup cols="6">
     <thead>
      <row>
       <entry>Function</entry>
       <entry>Direct Argument Type(s)</entry>
       <entry>Aggregated Argument Type(s)</entry>
       <entry>Return Type</entry>
+      <entry>Partial Mode</entry>
       <entry>Description</entry>
      </row>
     </thead>
@@ -13211,6 +13569,7 @@ SELECT xmlagg(x) FROM (SELECT x FROM test ORDER BY y DESC) AS tab;
       <entry>
        same as sort expression
       </entry>
+      <entry>No</entry>
       <entry>
        returns the most frequent input value (arbitrarily choosing the first
        one if there are multiple equally-frequent results)
@@ -13237,6 +13596,7 @@ SELECT xmlagg(x) FROM (SELECT x FROM test ORDER BY y DESC) AS tab;
       <entry>
        same as sort expression
       </entry>
+      <entry>No</entry>
       <entry>
        continuous percentile: returns a value corresponding to the specified
        fraction in the ordering, interpolating between adjacent input items if
@@ -13257,6 +13617,7 @@ SELECT xmlagg(x) FROM (SELECT x FROM test ORDER BY y DESC) AS tab;
       <entry>
        array of sort expression's type
       </entry>
+      <entry>No</entry>
       <entry>
        multiple continuous percentile: returns an array of results matching
        the shape of the <literal>fractions</literal> parameter, with each
@@ -13281,6 +13642,7 @@ SELECT xmlagg(x) FROM (SELECT x FROM test ORDER BY y DESC) AS tab;
       <entry>
        same as sort expression
       </entry>
+      <entry>No</entry>
       <entry>
        discrete percentile: returns the first input value whose position in
        the ordering equals or exceeds the specified fraction
@@ -13300,6 +13662,7 @@ SELECT xmlagg(x) FROM (SELECT x FROM test ORDER BY y DESC) AS tab;
       <entry>
        array of sort expression's type
       </entry>
+      <entry>No</entry>
       <entry>
        multiple discrete percentile: returns an array of results matching the
        shape of the <literal>fractions</literal> parameter, with each non-null
@@ -13338,13 +13701,14 @@ SELECT xmlagg(x) FROM (SELECT x FROM test ORDER BY y DESC) AS tab;
   <table id="functions-hypothetical-table">
    <title>Hypothetical-Set Aggregate Functions</title>
 
-   <tgroup cols="5">
+   <tgroup cols="6">
     <thead>
      <row>
       <entry>Function</entry>
       <entry>Direct Argument Type(s)</entry>
       <entry>Aggregated Argument Type(s)</entry>
       <entry>Return Type</entry>
+      <entry>Partial Mode</entry>
       <entry>Description</entry>
      </row>
     </thead>
@@ -13368,6 +13732,7 @@ SELECT xmlagg(x) FROM (SELECT x FROM test ORDER BY y DESC) AS tab;
       <entry>
        <type>bigint</type>
       </entry>
+      <entry>No</entry>
       <entry>
        rank of the hypothetical row, with gaps for duplicate rows
       </entry>
@@ -13390,6 +13755,7 @@ SELECT xmlagg(x) FROM (SELECT x FROM test ORDER BY y DESC) AS tab;
       <entry>
        <type>bigint</type>
       </entry>
+      <entry>No</entry>
       <entry>
        rank of the hypothetical row, without gaps
       </entry>
@@ -13412,6 +13778,7 @@ SELECT xmlagg(x) FROM (SELECT x FROM test ORDER BY y DESC) AS tab;
       <entry>
        <type>double precision</type>
       </entry>
+      <entry>No</entry>
       <entry>
        relative rank of the hypothetical row, ranging from 0 to 1
       </entry>
@@ -13434,6 +13801,7 @@ SELECT xmlagg(x) FROM (SELECT x FROM test ORDER BY y DESC) AS tab;
       <entry>
        <type>double precision</type>
       </entry>
+      <entry>No</entry>
       <entry>
        relative rank of the hypothetical row, ranging from
        1/<replaceable>N</> to 1
@@ -14872,9 +15240,21 @@ SELECT * FROM pg_ls_dir('.') WITH ORDINALITY AS t(ls,n);
       </row>
 
       <row>
+       <entry><literal><function>pg_blocking_pids(<type>int</type>)</function></literal></entry>
+       <entry><type>int[]</type></entry>
+       <entry>Process ID(s) that are blocking specified server process ID</entry>
+      </row>
+
+      <row>
        <entry><literal><function>pg_conf_load_time()</function></literal></entry>
        <entry><type>timestamp with time zone</type></entry>
        <entry>configuration load time</entry>
+      </row>
+
+      <row>
+       <entry><literal><function>pg_my_temp_schema()</function></literal></entry>
+       <entry><type>oid</type></entry>
+       <entry>OID of session's temporary schema, or 0 if none</entry>
       </row>
 
       <row>
@@ -14893,12 +15273,6 @@ SELECT * FROM pg_ls_dir('.') WITH ORDINALITY AS t(ls,n);
        <entry><literal><function>pg_notification_queue_usage()</function></literal></entry>
        <entry><type>double</type></entry>
        <entry>fraction of the asynchronous notification queue currently occupied (0-1)</entry>
-      </row>
-
-      <row>
-       <entry><literal><function>pg_my_temp_schema()</function></literal></entry>
-       <entry><type>oid</type></entry>
-       <entry>OID of session's temporary schema, or 0 if none</entry>
       </row>
 
       <row>
@@ -15032,25 +15406,6 @@ SET search_path TO <replaceable>schema</> <optional>, <replaceable>schema</>, ..
    </note>
 
    <indexterm>
-    <primary>pg_listening_channels</primary>
-   </indexterm>
-
-   <indexterm>
-    <primary>pg_notification_queue_usage</primary>
-   </indexterm>
-
-   <para>
-    <function>pg_listening_channels</function> returns a set of names of
-    asynchronous notification channels that the current session is listening
-    to.  <function>pg_notification_queue_usage</function> returns the
-    fraction of the total available space for notifications currently
-    occupied by notifications that are waiting to be processed, as a
-    <type>double</type> in the range 0-1.
-    See <xref linkend="sql-listen"> and <xref linkend="sql-notify">
-    for more information.
-   </para>
-
-   <indexterm>
     <primary>inet_client_addr</primary>
    </indexterm>
 
@@ -15078,6 +15433,43 @@ SET search_path TO <replaceable>schema</> <optional>, <replaceable>schema</>, ..
    </para>
 
    <indexterm>
+    <primary>pg_blocking_pids</primary>
+   </indexterm>
+
+   <para>
+    <function>pg_blocking_pids</function> returns an array of the process IDs
+    of the sessions that are blocking the server process with the specified
+    process ID, or an empty array if there is no such server process or it is
+    not blocked.  One server process blocks another if it either holds a lock
+    that conflicts with the blocked process's lock request (hard block), or is
+    waiting for a lock that would conflict with the blocked process's lock
+    request and is ahead of it in the wait queue (soft block).  When using
+    parallel queries the result always lists client-visible process IDs (that
+    is, <function>pg_backend_pid</> results) even if the actual lock is held
+    or awaited by a child worker process.  As a result of that, there may be
+    duplicated PIDs in the result.  Also note that when a prepared transaction
+    holds a conflicting lock, it will be represented by a zero process ID in
+    the result of this function.
+    Frequent calls to this function could have some impact on database
+    performance, because it needs exclusive access to the lock manager's
+    shared state for a short time.
+   </para>
+
+   <indexterm>
+    <primary>pg_conf_load_time</primary>
+   </indexterm>
+
+   <para>
+    <function>pg_conf_load_time</function> returns the
+    <type>timestamp with time zone</type> when the
+    server configuration files were last loaded.
+    (If the current session was alive at the time, this will be the time
+    when the session itself re-read the configuration files, so the
+    reading will vary a little in different sessions.  Otherwise it is
+    the time when the postmaster process re-read the configuration files.)
+   </para>
+
+   <indexterm>
     <primary>pg_my_temp_schema</primary>
    </indexterm>
 
@@ -15096,6 +15488,25 @@ SET search_path TO <replaceable>schema</> <optional>, <replaceable>schema</>, ..
    </para>
 
    <indexterm>
+    <primary>pg_listening_channels</primary>
+   </indexterm>
+
+   <indexterm>
+    <primary>pg_notification_queue_usage</primary>
+   </indexterm>
+
+   <para>
+    <function>pg_listening_channels</function> returns a set of names of
+    asynchronous notification channels that the current session is listening
+    to.  <function>pg_notification_queue_usage</function> returns the
+    fraction of the total available space for notifications currently
+    occupied by notifications that are waiting to be processed, as a
+    <type>double</type> in the range 0-1.
+    See <xref linkend="sql-listen"> and <xref linkend="sql-notify">
+    for more information.
+   </para>
+
+   <indexterm>
     <primary>pg_postmaster_start_time</primary>
    </indexterm>
 
@@ -15103,20 +15514,6 @@ SET search_path TO <replaceable>schema</> <optional>, <replaceable>schema</>, ..
     <function>pg_postmaster_start_time</function> returns the
     <type>timestamp with time zone</type> when the
     server started.
-   </para>
-
-   <indexterm>
-    <primary>pg_conf_load_time</primary>
-   </indexterm>
-
-   <para>
-    <function>pg_conf_load_time</function> returns the
-    <type>timestamp with time zone</type> when the
-    server configuration files were last loaded.
-    (If the current session was alive at the time, this will be the time
-    when the session itself re-read the configuration files, so the
-    reading will vary a little in different sessions.  Otherwise it is
-    the time when the postmaster process re-read the configuration files.)
    </para>
 
    <indexterm>
@@ -15819,6 +16216,14 @@ SELECT pg_type_is_visible('myschema.widget'::regtype);
     <primary>to_regtype</primary>
    </indexterm>
 
+   <indexterm>
+    <primary>to_regnamespace</primary>
+   </indexterm>
+
+   <indexterm>
+    <primary>to_regrole</primary>
+   </indexterm>
+
   <para>
    <xref linkend="functions-info-catalog-table"> lists functions that
    extract information from the system catalogs.
@@ -16009,6 +16414,16 @@ SELECT pg_type_is_visible('myschema.widget'::regtype);
        <entry><type>regtype</type></entry>
        <entry>get the OID of the named type</entry>
       </row>
+      <row>
+       <entry><literal><function>to_regnamespace(<parameter>schema_name</parameter>)</function></literal></entry>
+       <entry><type>regnamespace</type></entry>
+       <entry>get the OID of the named schema</entry>
+      </row>
+      <row>
+       <entry><literal><function>to_regrole(<parameter>role_name</parameter>)</function></literal></entry>
+       <entry><type>regrole</type></entry>
+       <entry>get the OID of the named role</entry>
+      </row>
      </tbody>
     </tgroup>
    </table>
@@ -16152,10 +16567,13 @@ SELECT collation for ('foo' COLLATE "de_DE");
   <para>
    The <function>to_regclass</function>, <function>to_regproc</function>,
    <function>to_regprocedure</function>, <function>to_regoper</function>,
-   <function>to_regoperator</function>, and <function>to_regtype</function>
-   functions translate relation, function, operator, and type names to objects
-   of type <type>regclass</>, <type>regproc</>, <type>regprocedure</type>,
-   <type>regoper</>, <type>regoperator</type>, and <type>regtype</>,
+   <function>to_regoperator</function>, <function>to_regtype</function>,
+   <function>to_regnamespace</function>, and <function>to_regrole</function>
+   functions translate relation, function, operator, type, schema, and role
+   names (given as <type>text</>) to objects of
+   type <type>regclass</>, <type>regproc</>, <type>regprocedure</type>,
+   <type>regoper</>, <type>regoperator</type>, <type>regtype</>,
+   <type>regnamespace</>, and <type>regrole</>
    respectively.  These functions differ from a cast from
    text in that they don't accept a numeric OID, and that they return null
    rather than throwing an error if the name is not found (or, for
@@ -16528,6 +16946,362 @@ SELECT collation for ('foo' COLLATE "de_DE");
     </tgroup>
    </table>
 
+   <para>
+    The functions shown in <xref linkend="functions-controldata">
+    print information initialized during <command>initdb</>, such
+    as the catalog version. They also show information about write-ahead
+    logging and checkpoint processing. This information is cluster-wide,
+    and not specific to any one database. They provide most of the same
+    information, from the same source, as
+    <xref linkend="APP-PGCONTROLDATA">, although in a form better suited
+    to <acronym>SQL</acronym> functions.
+   </para>
+
+   <table id="functions-controldata">
+    <title>Control Data Functions</title>
+    <tgroup cols="3">
+     <thead>
+      <row><entry>Name</entry> <entry>Return Type</entry> <entry>Description</entry></row>
+     </thead>
+
+     <tbody>
+      <row>
+       <entry>
+        <indexterm><primary>pg_control_checkpoint</primary></indexterm>
+        <literal><function>pg_control_checkpoint()</function></literal>
+       </entry>
+       <entry><type>record</type></entry>
+       <entry>
+        Returns information about current checkpoint state.
+       </entry>
+      </row>
+
+      <row>
+       <entry>
+        <indexterm><primary>pg_control_system</primary></indexterm>
+        <literal><function>pg_control_system()</function></literal>
+       </entry>
+       <entry><type>record</type></entry>
+       <entry>
+        Returns information about current controldata file state.
+       </entry>
+      </row>
+
+      <row>
+       <entry>
+        <indexterm><primary>pg_control_init</primary></indexterm>
+        <literal><function>pg_control_init()</function></literal>
+       </entry>
+       <entry><type>record</type></entry>
+       <entry>
+        Returns information about cluster initialization state.
+       </entry>
+      </row>
+
+      <row>
+       <entry>
+        <indexterm><primary>pg_control_recovery</primary></indexterm>
+        <literal><function>pg_control_recovery()</function></literal>
+       </entry>
+       <entry><type>record</type></entry>
+       <entry>
+        Returns information about recovery state.
+       </entry>
+      </row>
+
+     </tbody>
+    </tgroup>
+   </table>
+
+   <para>
+    <function>pg_control_checkpoint</> returns a record, shown in
+    <xref linkend="functions-pg-control-checkpoint">
+   </para>
+
+   <table id="functions-pg-control-checkpoint">
+    <title><function>pg_control_checkpoint</> Columns</title>
+    <tgroup cols="2">
+     <thead>
+      <row>
+       <entry>Column Name</entry>
+       <entry>Data Type</entry>
+      </row>
+     </thead>
+
+     <tbody>
+
+      <row>
+       <entry>checkpoint_location</entry>
+       <entry><type>pg_lsn</type></entry>
+      </row>
+
+      <row>
+       <entry>prior_location</entry>
+       <entry><type>pg_lsn</type></entry>
+      </row>
+
+      <row>
+       <entry>redo_location</entry>
+       <entry><type>pg_lsn</type></entry>
+      </row>
+
+      <row>
+       <entry>redo_wal_file</entry>
+       <entry><type>text</type></entry>
+      </row>
+
+      <row>
+       <entry>timeline_id</entry>
+       <entry><type>integer</type></entry>
+      </row>
+
+      <row>
+       <entry>prev_timeline_id</entry>
+       <entry><type>integer</type></entry>
+      </row>
+
+      <row>
+       <entry>full_page_writes</entry>
+       <entry><type>boolean</type></entry>
+      </row>
+
+      <row>
+       <entry>next_xid</entry>
+       <entry><type>text</type></entry>
+      </row>
+
+      <row>
+       <entry>next_oid</entry>
+       <entry><type>oid</type></entry>
+      </row>
+
+      <row>
+       <entry>next_multixact_id</entry>
+       <entry><type>xid</type></entry>
+      </row>
+
+      <row>
+       <entry>next_multi_offset</entry>
+       <entry><type>xid</type></entry>
+      </row>
+
+      <row>
+       <entry>oldest_xid</entry>
+       <entry><type>xid</type></entry>
+      </row>
+
+      <row>
+       <entry>oldest_xid_dbid</entry>
+       <entry><type>oid</type></entry>
+      </row>
+
+      <row>
+       <entry>oldest_active_xid</entry>
+       <entry><type>xid</type></entry>
+      </row>
+
+      <row>
+       <entry>oldest_multi_xid</entry>
+       <entry><type>xid</type></entry>
+      </row>
+
+      <row>
+       <entry>oldest_multi_dbid</entry>
+       <entry><type>oid</type></entry>
+      </row>
+
+      <row>
+       <entry>oldest_commit_ts_xid</entry>
+       <entry><type>xid</type></entry>
+      </row>
+
+      <row>
+       <entry>newest_commit_ts_xid</entry>
+       <entry><type>xid</type></entry>
+      </row>
+
+      <row>
+       <entry>checkpoint_time</entry>
+       <entry><type>timestamp with time zone</type></entry>
+      </row>
+
+     </tbody>
+    </tgroup>
+   </table>
+
+   <para>
+    <function>pg_control_system</> returns a record, shown in
+    <xref linkend="functions-pg-control-system">
+   </para>
+
+   <table id="functions-pg-control-system">
+    <title><function>pg_control_system</> Columns</title>
+    <tgroup cols="2">
+     <thead>
+      <row>
+       <entry>Column Name</entry>
+       <entry>Data Type</entry>
+      </row>
+     </thead>
+
+     <tbody>
+
+      <row>
+       <entry>pg_control_version</entry>
+       <entry><type>integer</type></entry>
+      </row>
+
+      <row>
+       <entry>catalog_version_no</entry>
+       <entry><type>integer</type></entry>
+      </row>
+
+      <row>
+       <entry>system_identifier</entry>
+       <entry><type>bigint</type></entry>
+      </row>
+
+      <row>
+       <entry>pg_control_last_modified</entry>
+       <entry><type>timestamp with time zone</type></entry>
+      </row>
+
+     </tbody>
+    </tgroup>
+   </table>
+
+   <para>
+    <function>pg_control_init</> returns a record, shown in
+    <xref linkend="functions-pg-control-init">
+   </para>
+
+   <table id="functions-pg-control-init">
+    <title><function>pg_control_init</> Columns</title>
+    <tgroup cols="2">
+     <thead>
+      <row>
+       <entry>Column Name</entry>
+       <entry>Data Type</entry>
+      </row>
+     </thead>
+
+     <tbody>
+
+      <row>
+       <entry>max_data_alignment</entry>
+       <entry><type>integer</type></entry>
+      </row>
+
+      <row>
+       <entry>database_block_size</entry>
+       <entry><type>integer</type></entry>
+      </row>
+
+      <row>
+       <entry>blocks_per_segment</entry>
+       <entry><type>integer</type></entry>
+      </row>
+
+      <row>
+       <entry>wal_block_size</entry>
+       <entry><type>integer</type></entry>
+      </row>
+
+      <row>
+       <entry>bytes_per_wal_segment</entry>
+       <entry><type>integer</type></entry>
+      </row>
+
+      <row>
+       <entry>max_identifier_length</entry>
+       <entry><type>integer</type></entry>
+      </row>
+
+      <row>
+       <entry>max_index_columns</entry>
+       <entry><type>integer</type></entry>
+      </row>
+
+      <row>
+       <entry>max_toast_chunk_size</entry>
+       <entry><type>integer</type></entry>
+      </row>
+
+      <row>
+       <entry>large_object_chunk_size</entry>
+       <entry><type>integer</type></entry>
+      </row>
+
+      <row>
+       <entry>bigint_timestamps</entry>
+       <entry><type>boolean</type></entry>
+      </row>
+
+      <row>
+       <entry>float4_pass_by_value</entry>
+       <entry><type>boolean</type></entry>
+      </row>
+
+      <row>
+       <entry>float8_pass_by_value</entry>
+       <entry><type>boolean</type></entry>
+      </row>
+
+      <row>
+       <entry>data_page_checksum_version</entry>
+       <entry><type>integer</type></entry>
+      </row>
+
+     </tbody>
+    </tgroup>
+   </table>
+
+   <para>
+    <function>pg_control_recovery</> returns a record, shown in
+    <xref linkend="functions-pg-control-recovery">
+   </para>
+
+   <table id="functions-pg-control-recovery">
+    <title><function>pg_control_recovery</> Columns</title>
+    <tgroup cols="2">
+     <thead>
+      <row>
+       <entry>Column Name</entry>
+       <entry>Data Type</entry>
+      </row>
+     </thead>
+
+     <tbody>
+
+      <row>
+       <entry>min_recovery_end_location</entry>
+       <entry><type>pg_lsn</type></entry>
+      </row>
+
+      <row>
+       <entry>min_recovery_end_timeline</entry>
+       <entry><type>integer</type></entry>
+      </row>
+
+      <row>
+       <entry>backup_start_location</entry>
+       <entry><type>pg_lsn</type></entry>
+      </row>
+
+      <row>
+       <entry>backup_end_location</entry>
+       <entry><type>pg_lsn</type></entry>
+      </row>
+
+      <row>
+       <entry>end_of_backup_record_required</entry>
+       <entry><type>boolean</type></entry>
+      </row>
+
+     </tbody>
+    </tgroup>
+   </table>
+
   </sect1>
 
   <sect1 id="functions-admin">
@@ -16659,8 +17433,9 @@ SELECT set_config('log_statement_stats', 'off', false);
    <para>
     The functions shown in <xref
     linkend="functions-admin-signal-table"> send control signals to
-    other server processes.  Use of these functions is usually restricted
-    to superusers, with noted exceptions.
+    other server processes.  Use of these functions is restricted to
+    superusers by default but access may be granted to others with the
+    <command>GRANT</command>, with noted exceptions.
    </para>
 
    <table id="functions-admin-signal-table">
@@ -16678,7 +17453,8 @@ SELECT set_config('log_statement_stats', 'off', false);
         </entry>
        <entry><type>boolean</type></entry>
        <entry>Cancel a backend's current query.  This is also allowed if the
-        calling role is a member of the role whose backend is being canceled,
+        calling role is a member of the role whose backend is being canceled or
+        the calling role has been granted <literal>pg_signal_backend</literal>,
         however only superusers can cancel superuser backends.
         </entry>
       </row>
@@ -16702,8 +17478,9 @@ SELECT set_config('log_statement_stats', 'off', false);
         </entry>
        <entry><type>boolean</type></entry>
        <entry>Terminate a backend.  This is also allowed if the calling role
-        is a member of the role whose backend is being terminated, however only
-        superusers can terminate superuser backends.
+        is a member of the role whose backend is being terminated or the
+        calling role has been granted <literal>pg_signal_backend</literal>,
+        however only superusers can terminate superuser backends.
        </entry>
       </row>
      </tbody>
@@ -16753,6 +17530,9 @@ SELECT set_config('log_statement_stats', 'off', false);
    </indexterm>
    <indexterm>
     <primary>pg_create_restore_point</primary>
+   </indexterm>
+   <indexterm>
+    <primary>pg_current_xlog_flush_location</primary>
    </indexterm>
    <indexterm>
     <primary>pg_current_xlog_insert_location</primary>
@@ -16807,7 +17587,14 @@ SELECT set_config('log_statement_stats', 'off', false);
         <literal><function>pg_create_restore_point(<parameter>name</> <type>text</>)</function></literal>
         </entry>
        <entry><type>pg_lsn</type></entry>
-       <entry>Create a named point for performing restore (restricted to superusers)</entry>
+       <entry>Create a named point for performing restore (restricted to superusers by default, but other users can be granted EXECUTE to run the function)</entry>
+      </row>
+      <row>
+       <entry>
+        <literal><function>pg_current_xlog_flush_location()</function></literal>
+        </entry>
+       <entry><type>pg_lsn</type></entry>
+       <entry>Get current transaction log flush location</entry>
       </row>
       <row>
        <entry>
@@ -16825,17 +17612,24 @@ SELECT set_config('log_statement_stats', 'off', false);
       </row>
       <row>
        <entry>
-        <literal><function>pg_start_backup(<parameter>label</> <type>text</> <optional>, <parameter>fast</> <type>boolean</> </optional>)</function></literal>
+        <literal><function>pg_start_backup(<parameter>label</> <type>text</> <optional>, <parameter>fast</> <type>boolean</> <optional>, <parameter>exclusive</> <type>boolean</> </optional></optional>)</function></literal>
         </entry>
        <entry><type>pg_lsn</type></entry>
-       <entry>Prepare for performing on-line backup (restricted to superusers or replication roles)</entry>
+       <entry>Prepare for performing on-line backup (restricted to superusers by default, but other users can be granted EXECUTE to run the function)</entry>
       </row>
       <row>
        <entry>
         <literal><function>pg_stop_backup()</function></literal>
         </entry>
        <entry><type>pg_lsn</type></entry>
-       <entry>Finish performing on-line backup (restricted to superusers or replication roles)</entry>
+       <entry>Finish performing exclusive on-line backup (restricted to superusers by default, but other users can be granted EXECUTE to run the function)</entry>
+      </row>
+      <row>
+       <entry>
+        <literal><function>pg_stop_backup(<parameter>exclusive</> <type>boolean</>)</function></literal>
+        </entry>
+       <entry><type>setof record</type></entry>
+       <entry>Finish performing exclusive or non-exclusive on-line backup (restricted to superusers by default, but other users can be granted EXECUTE to run the function)</entry>
       </row>
       <row>
        <entry>
@@ -16856,7 +17650,7 @@ SELECT set_config('log_statement_stats', 'off', false);
         <literal><function>pg_switch_xlog()</function></literal>
         </entry>
        <entry><type>pg_lsn</type></entry>
-       <entry>Force switch to a new transaction log file (restricted to superusers)</entry>
+       <entry>Force switch to a new transaction log file (restricted to superusers by default, but other users can be granted EXECUTE to run the function)</entry>
       </row>
       <row>
        <entry>
@@ -16884,15 +17678,19 @@ SELECT set_config('log_statement_stats', 'off', false);
    </table>
 
    <para>
-    <function>pg_start_backup</> accepts an
-    arbitrary user-defined label for the backup.  (Typically this would be
-    the name under which the backup dump file will be stored.)  The function
-    writes a backup label file (<filename>backup_label</>) and, if there
-    are any links in the <filename>pg_tblspc/</> directory, a tablespace map
-    file (<filename>tablespace_map</>) into the database cluster's data
-    directory, performs a checkpoint, and then returns the backup's starting
-    transaction log location as text.  The user can ignore this result value,
-    but it is provided in case it is useful.
+    <function>pg_start_backup</> accepts an arbitrary user-defined label for
+    the backup.  (Typically this would be the name under which the backup dump
+    file will be stored.) When used in exclusive mode, the function writes a
+    backup label file (<filename>backup_label</>) and, if there are any links
+    in the <filename>pg_tblspc/</> directory, a tablespace map file
+    (<filename>tablespace_map</>) into the database cluster's data directory,
+    performs a checkpoint, and then returns the backup's starting transaction
+    log location as text.  The user can ignore this result value, but it is
+    provided in case it is useful. When used in non-exclusive mode, the
+    contents of these files are instead returned by the
+    <function>pg_stop_backup</> function, and should be written to the backup
+    by the caller.
+
 <programlisting>
 postgres=# select pg_start_backup('label_goes_here');
  pg_start_backup
@@ -16907,10 +17705,17 @@ postgres=# select pg_start_backup('label_goes_here');
    </para>
 
    <para>
-    <function>pg_stop_backup</> removes the label file and, if it exists,
-    the <filename>tablespace_map</> file created by
-    <function>pg_start_backup</>, and creates a backup history file in
-    the transaction log archive area.  The history file includes the label given to
+    In an exclusive backup, <function>pg_stop_backup</> removes the label file
+    and, if it exists, the <filename>tablespace_map</> file created by
+    <function>pg_start_backup</>. In a non-exclusive backup, the contents of
+    the <filename>backup_label</> and <filename>tablespace_map</> are returned
+    in the result of the function, and should be written to files in the
+    backup (and not in the data directory).
+   </para>
+
+   <para>
+    The function also creates a backup history file in the transaction log
+    archive area. The history file includes the label given to
     <function>pg_start_backup</>, the starting and ending transaction log locations for
     the backup, and the starting and ending times of the backup.  The return
     value is the backup's ending transaction log location (which again
@@ -16943,13 +17748,14 @@ postgres=# select pg_start_backup('label_goes_here');
     <function>pg_current_xlog_location</> displays the current transaction log write
     location in the same format used by the above functions.  Similarly,
     <function>pg_current_xlog_insert_location</> displays the current transaction log
-    insertion point.  The insertion point is the <quote>logical</> end
-    of the transaction log
-    at any instant, while the write location is the end of what has actually
-    been written out from the server's internal buffers.  The write location
-    is the end of what can be examined from outside the server, and is usually
+    insertion point and <function>pg_current_xlog_flush_location</> displays the
+    current transaction log flush point. The insertion point is the <quote>logical</>
+    end of the transaction log at any instant, while the write location is the end of
+    what has actually been written out from the server's internal buffers and flush
+    location is the location guaranteed to be written to durable storage. The write
+    location is the end of what can be examined from outside the server, and is usually
     what you want if you are interested in archiving partially-complete transaction log
-    files.  The insertion point is made available primarily for server
+    files.  The insertion and flush points are made available primarily for server
     debugging purposes.  These are both read-only operations and do not
     require superuser permissions.
    </para>
@@ -17112,7 +17918,7 @@ postgres=# SELECT * FROM pg_xlogfile_name_offset(pg_stop_backup());
         <literal><function>pg_xlog_replay_pause()</function></literal>
         </entry>
        <entry><type>void</type></entry>
-       <entry>Pauses recovery immediately (restricted to superusers).
+       <entry>Pauses recovery immediately (restricted to superusers by default, but other users can be granted EXECUTE to run the function).
        </entry>
       </row>
       <row>
@@ -17120,7 +17926,7 @@ postgres=# SELECT * FROM pg_xlogfile_name_offset(pg_stop_backup());
         <literal><function>pg_xlog_replay_resume()</function></literal>
         </entry>
        <entry><type>void</type></entry>
-       <entry>Restarts recovery if it was paused (restricted to superusers).
+       <entry>Restarts recovery if it was paused (restricted to superusers by default, but other users can be granted EXECUTE to run the function).
        </entry>
       </row>
      </tbody>
@@ -17228,7 +18034,8 @@ postgres=# SELECT * FROM pg_xlogfile_name_offset(pg_stop_backup());
     in <xref linkend="functions-replication-table"> are for
     controlling and interacting with replication features.
     See <xref linkend="streaming-replication">,
-    <xref linkend="streaming-replication-slots">, <xref linkend="replication-origins">
+    <xref linkend="streaming-replication-slots">, and
+    <xref linkend="replication-origins">
     for information about the underlying features.  Use of these
     functions is restricted to superusers.
    </para>
@@ -17239,9 +18046,11 @@ postgres=# SELECT * FROM pg_xlogfile_name_offset(pg_stop_backup());
    </para>
 
    <para>
-    The functions described in <xref linkend="functions-snapshot-synchronization">, <xref
-    linkend="functions-recovery-control">, and <xref
-    linkend="functions-admin-backup"> are also relevant for replication.
+    The functions described in
+    <xref linkend="functions-admin-backup">,
+    <xref linkend="functions-recovery-control">, and
+    <xref linkend="functions-snapshot-synchronization">
+    are also relevant for replication.
    </para>
 
    <table id="functions-replication-table">
@@ -17401,11 +18210,11 @@ postgres=# SELECT * FROM pg_xlogfile_name_offset(pg_stop_backup());
         <literal><function>pg_replication_origin_create(<parameter>node_name</parameter> <type>text</type>)</function></literal>
        </entry>
        <entry>
-        <parameter>internal_id</parameter> <type>oid</type>
+        <type>oid</type>
        </entry>
        <entry>
-        Create a replication origin with the passed in external
-        name, and create an internal id for it.
+        Create a replication origin with the given external
+        name, and return the internal id assigned to it.
        </entry>
       </row>
 
@@ -17420,7 +18229,7 @@ postgres=# SELECT * FROM pg_xlogfile_name_offset(pg_stop_backup());
         void
        </entry>
        <entry>
-        Delete a previously created replication origin, including the
+        Delete a previously created replication origin, including any
         associated replay progress.
        </entry>
       </row>
@@ -17433,10 +18242,10 @@ postgres=# SELECT * FROM pg_xlogfile_name_offset(pg_stop_backup());
         <literal><function>pg_replication_origin_oid(<parameter>node_name</parameter> <type>text</type>)</function></literal>
        </entry>
        <entry>
-        <parameter>internal_id</parameter> <type>oid</type>
+        <type>oid</type>
        </entry>
        <entry>
-        Lookup replication origin by name and return the internal id. If no
+        Lookup a replication origin by name and return the internal id. If no
         corresponding replication origin is found an error is thrown.
        </entry>
       </row>
@@ -17452,7 +18261,7 @@ postgres=# SELECT * FROM pg_xlogfile_name_offset(pg_stop_backup());
         void
        </entry>
        <entry>
-        Configure the current session to be replaying from the passed in
+        Mark the current session as replaying from the given
         origin, allowing replay progress to be tracked.  Use
         <function>pg_replication_origin_session_reset</function> to revert.
         Can only be used if no previous origin is configured.
@@ -17478,12 +18287,12 @@ postgres=# SELECT * FROM pg_xlogfile_name_offset(pg_stop_backup());
       <row>
        <entry>
         <indexterm>
-         <primary>pg_replication_session_is_setup</primary>
+         <primary>pg_replication_origin_session_is_setup</primary>
         </indexterm>
-        <literal><function>pg_replication_session_is_setup()</function></literal>
+        <literal><function>pg_replication_origin_session_is_setup()</function></literal>
        </entry>
        <entry>
-        bool
+        <type>bool</type>
        </entry>
        <entry>
         Has a replication origin been configured in the current session?
@@ -17498,7 +18307,7 @@ postgres=# SELECT * FROM pg_xlogfile_name_offset(pg_stop_backup());
         <literal><function>pg_replication_origin_session_progress(<parameter>flush</parameter> <type>bool</type>)</function></literal>
        </entry>
        <entry>
-        pg_lsn
+        <type>pg_lsn</type>
        </entry>
        <entry>
         Return the replay position for the replication origin configured in
@@ -17519,8 +18328,8 @@ postgres=# SELECT * FROM pg_xlogfile_name_offset(pg_stop_backup());
         void
        </entry>
        <entry>
-        Mark the current transaction to be replaying a transaction that has
-        committed at the passed in <acronym>LSN</acronym> and timestamp. Can
+        Mark the current transaction as replaying a transaction that has
+        committed at the given <acronym>LSN</acronym> and timestamp. Can
         only be called when a replication origin has previously been
         configured using
         <function>pg_replication_origin_session_setup()</function>.
@@ -17554,7 +18363,7 @@ postgres=# SELECT * FROM pg_xlogfile_name_offset(pg_stop_backup());
         void
        </entry>
        <entry>
-        Set replication progress for the passed in node to the passed in
+        Set replication progress for the given node to the given
         position. This primarily is useful for setting up the initial position
         or a new position after configuration changes and similar. Be aware
         that careless use of this function can lead to inconsistently
@@ -17570,13 +18379,55 @@ postgres=# SELECT * FROM pg_xlogfile_name_offset(pg_stop_backup());
         <literal><function>pg_replication_origin_progress(<parameter>node_name</parameter> <type>text</type>, <parameter>flush</parameter> <type>bool</type>)</function></literal>
        </entry>
        <entry>
-        pg_lsn
+        <type>pg_lsn</type>
        </entry>
        <entry>
-        Return the replay position for the passed in replication origin. The
+        Return the replay position for the given replication origin. The
         parameter <parameter>flush</parameter> determines whether the
         corresponding local transaction will be guaranteed to have been
         flushed to disk or not.
+       </entry>
+      </row>
+
+      <row>
+       <entry id="pg-logical-emit-message-text">
+        <indexterm>
+         <primary>pg_logical_emit_message</primary>
+        </indexterm>
+        <literal><function>pg_logical_emit_message(<parameter>transactional</parameter> <type>bool</type>, <parameter>prefix</parameter> <type>text</type>, <parameter>content</parameter> <type>text</type>)</function></literal>
+       </entry>
+       <entry>
+        <type>pg_lsn</type>
+       </entry>
+       <entry>
+        Emit text logical decoding message. This can be used to pass generic
+        messages to logical decoding plugins through WAL. The parameter
+        <parameter>transactional</parameter> specifies if the message should
+        be part of current transaction or if it should be written immediately
+        and decoded as soon as the logical decoding reads the record. The
+        <parameter>prefix</parameter> is textual prefix used by the logical
+        decoding plugins to easily recognize interesting messages for them.
+        The <parameter>content</parameter> is the text of the message.
+       </entry>
+      </row>
+
+      <row>
+       <entry id="pg-logical-emit-message-bytea">
+        <literal><function>pg_logical_emit_message(<parameter>transactional</parameter> <type>bool</type>, <parameter>prefix</parameter> <type>text</type>, <parameter>content</parameter> <type>bytea</type>)</function></literal>
+       </entry>
+       <entry>
+        <type>pg_lsn</type>
+       </entry>
+       <entry>
+        Emit binary logical decoding message. This can be used to pass generic
+        messages to logical decoding plugins through WAL. The parameter
+        <parameter>transactional</parameter> specifies if the message should
+        be part of current transaction or if it should be written immediately
+        and decoded as soon as the logical decoding reads the record. The
+        <parameter>prefix</parameter> is textual prefix used by the logical
+        decoding plugins to easily recognize interesting messages for them.
+        The <parameter>content</parameter> is the binary content of the
+        message.
        </entry>
       </row>
 
@@ -17605,6 +18456,9 @@ postgres=# SELECT * FROM pg_xlogfile_name_offset(pg_stop_backup());
    </indexterm>
    <indexterm>
     <primary>pg_relation_size</primary>
+   </indexterm>
+   <indexterm>
+    <primary>pg_size_bytes</primary>
    </indexterm>
    <indexterm>
     <primary>pg_size_pretty</primary>
@@ -17674,6 +18528,15 @@ postgres=# SELECT * FROM pg_xlogfile_name_offset(pg_stop_backup());
        <entry><type>bigint</type></entry>
        <entry>
         Shorthand for <literal>pg_relation_size(..., 'main')</literal>
+       </entry>
+      </row>
+      <row>
+       <entry>
+        <literal><function>pg_size_bytes(<type>text</type>)</function></literal>
+        </entry>
+       <entry><type>bigint</type></entry>
+       <entry>
+         Converts a size in human-readable format with size units into bytes
        </entry>
       </row>
       <row>
@@ -17808,9 +18671,25 @@ postgres=# SELECT * FROM pg_xlogfile_name_offset(pg_stop_backup());
 
    <para>
     <function>pg_size_pretty</> can be used to format the result of one of
-    the other functions in a human-readable way, using kB, MB, GB or TB as
-    appropriate.
+    the other functions in a human-readable way, using bytes, kB, MB, GB or TB
+    as appropriate.
    </para>
+
+   <para>
+    <function>pg_size_bytes</> can be used to get the size in bytes from a
+    string in human-readable format. The input may have units of bytes, kB,
+    MB, GB or TB, and is parsed case-insensitively. If no units are specified,
+    bytes are assumed.
+   </para>
+
+   <note>
+    <para>
+     The units kB, MB, GB and TB used by the functions
+     <function>pg_size_pretty</> and <function>pg_size_bytes</> are defined
+     using powers of 2 rather than powers of 10, so 1kB is 1024 bytes, 1MB is
+     1024<superscript>2</> = 1048576 bytes, and so on.
+    </para>
+   </note>
 
    <para>
     The functions above that operate on tables or indexes accept a
@@ -17908,6 +18787,74 @@ postgres=# SELECT * FROM pg_xlogfile_name_offset(pg_stop_backup());
     <function>pg_relation_filenode</>. Given a <quote>tablespace</> OID and
     a <quote>filenode</>, it returns the associated relation's OID. For a table
     in the database's default tablespace, the tablespace can be specified as 0.
+   </para>
+
+  </sect2>
+
+  <sect2 id="functions-admin-index">
+   <title>Index Maintenance Functions</title>
+
+   <indexterm>
+    <primary>brin_summarize_new_values</primary>
+   </indexterm>
+
+   <indexterm>
+    <primary>gin_clean_pending_list</primary>
+   </indexterm>
+
+   <para>
+    <xref linkend="functions-admin-index-table"> shows the functions
+    available for index maintenance tasks.
+    These functions cannot be executed during recovery.
+    Use of these functions is restricted to superusers and the owner
+    of the given index.
+   </para>
+
+   <table id="functions-admin-index-table">
+    <title>Index Maintenance Functions</title>
+    <tgroup cols="3">
+     <thead>
+      <row><entry>Name</entry> <entry>Return Type</entry> <entry>Description</entry></row>
+     </thead>
+
+     <tbody>
+      <row>
+       <entry>
+        <literal><function>brin_summarize_new_values(<parameter>index_oid</> <type>regclass</>)</function></literal>
+       </entry>
+       <entry><type>integer</type></entry>
+       <entry>summarize page ranges not already summarized</entry>
+      </row>
+      <row>
+       <entry>
+        <literal><function>gin_clean_pending_list(<parameter>index</> <type>regclass</>)</function></literal>
+       </entry>
+       <entry><type>bigint</type></entry>
+       <entry>move GIN pending list entries into main index structure</entry>
+      </row>
+     </tbody>
+    </tgroup>
+   </table>
+
+   <para>
+    <function>brin_summarize_new_values</> receives a BRIN index OID as
+    argument and inspects the index to find page ranges in the base table
+    that are not currently summarized by the index; for any such range
+    it creates a new summary index tuple by scanning the table pages.
+    It returns the number of new page range summaries that were inserted
+    into the index.
+   </para>
+
+   <para>
+    <function>gin_clean_pending_list</> accepts the OID or name of
+    a GIN index and cleans up the pending list of the specified GIN index
+    by moving entries in it to the main GIN data structure in bulk.
+    It returns the number of pages cleaned up from the pending list.
+    Note that if the argument is a GIN index built with <literal>fastupdate</>
+    option disabled, the cleanup does not happen and the return value is 0
+    because the index doesn't have a pending list.
+    Please see <xref linkend="gin-fast-update"> and <xref linkend="gin-tips">
+    for details of the pending list and <literal>fastupdate</> option.
    </para>
 
   </sect2>

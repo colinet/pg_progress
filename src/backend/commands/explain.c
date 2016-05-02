@@ -3,7 +3,7 @@
  * explain.c
  *	  Explain query execution plans
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994-5, Regents of the University of California
  *
  * IDENTIFICATION
@@ -21,8 +21,10 @@
 #include "commands/prepare.h"
 #include "executor/hashjoin.h"
 #include "foreign/fdwapi.h"
+#include "nodes/extensible.h"
 #include "nodes/nodeFuncs.h"
 #include "optimizer/clauses.h"
+#include "optimizer/planmain.h"
 #include "parser/parsetree.h"
 #include "rewrite/rewriteHandler.h"
 #include "tcop/tcopprot.h"
@@ -346,7 +348,7 @@ ExplainOneQuery(Query *query, IntoClause *into, ExplainState *es,
 		INSTR_TIME_SET_CURRENT(planstart);
 
 		/* plan the query */
-		plan = pg_plan_query(query, CURSOR_OPT_PARALLEL_OK, params);
+		plan = pg_plan_query(query, into ? 0 : CURSOR_OPT_PARALLEL_OK, params);
 
 		INSTR_TIME_SET_CURRENT(planduration);
 		INSTR_TIME_SUBTRACT(planduration, planstart);
@@ -572,6 +574,7 @@ void
 ExplainPrintPlan(ExplainState *es, QueryDesc *queryDesc)
 {
 	Bitmapset  *rels_used = NULL;
+	PlanState  *ps;
 
 	Assert(queryDesc->plannedstmt != NULL);
 	es->pstmt = queryDesc->plannedstmt;
@@ -580,7 +583,17 @@ ExplainPrintPlan(ExplainState *es, QueryDesc *queryDesc)
 	es->rtable_names = select_rtable_names_for_explain(es->rtable, rels_used);
 	es->deparse_cxt = deparse_context_for_plan_rtable(es->rtable,
 													  es->rtable_names);
-	ExplainNode(queryDesc->planstate, NIL, NULL, NULL, es);
+
+	/*
+	 * Sometimes we mark a Gather node as "invisible", which means that it's
+	 * not displayed in EXPLAIN output.  The purpose of this is to allow
+	 * running regression tests with force_parallel_mode=regress to get the
+	 * same results as running the same tests with force_parallel_mode=off.
+	 */
+	ps = queryDesc->planstate;
+	if (IsA(ps, GatherState) &&((Gather *) ps->plan)->invisible)
+		ps = outerPlanState(ps);
+	ExplainNode(ps, NIL, NULL, NULL, es);
 }
 
 /*
@@ -888,7 +901,29 @@ ExplainNode(PlanState *planstate, List *ancestors,
 			pname = sname = "WorkTable Scan";
 			break;
 		case T_ForeignScan:
-			pname = sname = "Foreign Scan";
+			sname = "Foreign Scan";
+			switch (((ForeignScan *) plan)->operation)
+			{
+				case CMD_SELECT:
+					pname = "Foreign Scan";
+					operation = "Select";
+					break;
+				case CMD_INSERT:
+					pname = "Foreign Insert";
+					operation = "Insert";
+					break;
+				case CMD_UPDATE:
+					pname = "Foreign Update";
+					operation = "Update";
+					break;
+				case CMD_DELETE:
+					pname = "Foreign Delete";
+					operation = "Delete";
+					break;
+				default:
+					pname = "???";
+					break;
+			}
 			break;
 		case T_CustomScan:
 			sname = "Custom Scan";
@@ -909,24 +944,36 @@ ExplainNode(PlanState *planstate, List *ancestors,
 			break;
 		case T_Agg:
 			sname = "Aggregate";
-			switch (((Agg *) plan)->aggstrategy)
 			{
-				case AGG_PLAIN:
-					pname = "Aggregate";
-					strategy = "Plain";
-					break;
-				case AGG_SORTED:
-					pname = "GroupAggregate";
-					strategy = "Sorted";
-					break;
-				case AGG_HASHED:
-					pname = "HashAggregate";
-					strategy = "Hashed";
-					break;
-				default:
-					pname = "Aggregate ???";
-					strategy = "???";
-					break;
+				Agg		   *agg = (Agg *) plan;
+
+				if (agg->finalizeAggs == false)
+					operation = "Partial";
+				else if (agg->combineStates == true)
+					operation = "Finalize";
+
+				switch (agg->aggstrategy)
+				{
+					case AGG_PLAIN:
+						pname = "Aggregate";
+						strategy = "Plain";
+						break;
+					case AGG_SORTED:
+						pname = "GroupAggregate";
+						strategy = "Sorted";
+						break;
+					case AGG_HASHED:
+						pname = "HashAggregate";
+						strategy = "Hashed";
+						break;
+					default:
+						pname = "Aggregate ???";
+						strategy = "???";
+						break;
+				}
+
+				if (operation != NULL)
+					pname = psprintf("%s %s", operation, pname);
 			}
 			break;
 		case T_WindowAgg:
@@ -1286,17 +1333,25 @@ ExplainNode(PlanState *planstate, List *ancestors,
 			break;
 		case T_Gather:
 			{
-				Gather *gather = (Gather *) plan;
+				Gather	   *gather = (Gather *) plan;
 
 				show_scan_qual(plan->qual, "Filter", planstate, ancestors, es);
 				if (plan->qual)
 					show_instrumentation_count("Rows Removed by Filter", 1,
 											   planstate, es);
-				ExplainPropertyInteger("Number of Workers",
+				ExplainPropertyInteger("Workers Planned",
 									   gather->num_workers, es);
+				if (es->analyze)
+				{
+					int			nworkers;
+
+					nworkers = ((GatherState *) planstate)->nworkers_launched;
+					ExplainPropertyInteger("Workers Launched",
+										   nworkers, es);
+				}
 				if (gather->single_copy)
 					ExplainPropertyText("Single Copy",
-										gather->single_copy ? "true" : "false",
+									  gather->single_copy ? "true" : "false",
 										es);
 			}
 			break;
@@ -1467,8 +1522,8 @@ ExplainNode(PlanState *planstate, List *ancestors,
 				appendStringInfo(es->str, "Worker %d: ", n);
 				if (es->timing)
 					appendStringInfo(es->str,
-							"actual time=%.3f..%.3f rows=%.0f loops=%.0f\n",
-								 startup_sec, total_sec, rows, nloops);
+							 "actual time=%.3f..%.3f rows=%.0f loops=%.0f\n",
+									 startup_sec, total_sec, rows, nloops);
 				else
 					appendStringInfo(es->str,
 									 "actual rows=%.0f loops=%.0f\n",
@@ -1623,6 +1678,20 @@ show_plan_tlist(PlanState *planstate, List *ancestors, ExplainState *es)
 	if (IsA(plan, MergeAppend))
 		return;
 	if (IsA(plan, RecursiveUnion))
+		return;
+
+	/*
+	 * Likewise for ForeignScan that executes a direct INSERT/UPDATE/DELETE
+	 *
+	 * Note: the tlist for a ForeignScan that executes a direct INSERT/UPDATE
+	 * might contain subplan output expressions that are confusing in this
+	 * context.  The tlist for a ForeignScan that executes a direct UPDATE/
+	 * DELETE always contains "junk" target columns to identify the exact row
+	 * to update or delete, which would be confusing in this context.  So, we
+	 * suppress it in all the cases.
+	 */
+	if (IsA(plan, ForeignScan) &&
+		((ForeignScan *) plan)->operation != CMD_SELECT)
 		return;
 
 	/* Set up deparsing context */
@@ -2212,8 +2281,16 @@ show_foreignscan_info(ForeignScanState *fsstate, ExplainState *es)
 	FdwRoutine *fdwroutine = fsstate->fdwroutine;
 
 	/* Let the FDW emit whatever fields it wants */
-	if (fdwroutine->ExplainForeignScan != NULL)
-		fdwroutine->ExplainForeignScan(fsstate, es);
+	if (((ForeignScan *) fsstate->ss.ps.plan)->operation != CMD_SELECT)
+	{
+		if (fdwroutine->ExplainDirectModify != NULL)
+			fdwroutine->ExplainDirectModify(fsstate, es);
+	}
+	else
+	{
+		if (fdwroutine->ExplainForeignScan != NULL)
+			fdwroutine->ExplainForeignScan(fsstate, es);
+	}
 }
 
 /*
@@ -2261,7 +2338,7 @@ show_buffer_usage(ExplainState *es, const BufferUsage *usage)
 		bool		has_temp = (usage->temp_blks_read > 0 ||
 								usage->temp_blks_written > 0);
 		bool		has_timing = (!INSTR_TIME_IS_ZERO(usage->blk_read_time) ||
-								 !INSTR_TIME_IS_ZERO(usage->blk_write_time));
+								  !INSTR_TIME_IS_ZERO(usage->blk_write_time));
 
 		/* Show only positive counter values. */
 		if (has_shared || has_local || has_temp)
@@ -2325,10 +2402,10 @@ show_buffer_usage(ExplainState *es, const BufferUsage *usage)
 			appendStringInfoString(es->str, "I/O Timings:");
 			if (!INSTR_TIME_IS_ZERO(usage->blk_read_time))
 				appendStringInfo(es->str, " read=%0.3f",
-						  INSTR_TIME_GET_MILLISEC(usage->blk_read_time));
+							  INSTR_TIME_GET_MILLISEC(usage->blk_read_time));
 			if (!INSTR_TIME_IS_ZERO(usage->blk_write_time))
 				appendStringInfo(es->str, " write=%0.3f",
-						 INSTR_TIME_GET_MILLISEC(usage->blk_write_time));
+							 INSTR_TIME_GET_MILLISEC(usage->blk_write_time));
 			appendStringInfoChar(es->str, '\n');
 		}
 	}
@@ -2599,8 +2676,10 @@ show_modifytable_info(ModifyTableState *mtstate, List *ancestors,
 			}
 		}
 
-		/* Give FDW a chance */
-		if (fdwroutine && fdwroutine->ExplainForeignModify != NULL)
+		/* Give FDW a chance if needed */
+		if (!resultRelInfo->ri_usesFdwDirectModify &&
+			fdwroutine != NULL &&
+			fdwroutine->ExplainForeignModify != NULL)
 		{
 			List	   *fdw_private = (List *) list_nth(node->fdwPrivLists, j);
 

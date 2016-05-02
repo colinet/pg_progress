@@ -10,7 +10,7 @@
  * the location.
  *
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/nodes/parsenodes.h
@@ -157,9 +157,10 @@ typedef struct Query
 	List	   *constraintDeps; /* a list of pg_constraint OIDs that the query
 								 * depends on to be semantically valid */
 
-	List	   *withCheckOptions;	/* a list of WithCheckOption's, which are
-									 * only added during rewrite and therefore
-									 * are not written out as part of Query. */
+	List	   *withCheckOptions;		/* a list of WithCheckOption's, which
+										 * are only added during rewrite and
+										 * therefore are not written out as
+										 * part of Query. */
 } Query;
 
 
@@ -351,13 +352,17 @@ typedef struct A_Star
 } A_Star;
 
 /*
- * A_Indices - array subscript or slice bounds ([lidx:uidx] or [uidx])
+ * A_Indices - array subscript or slice bounds ([idx] or [lidx:uidx])
+ *
+ * In slice case, either or both of lidx and uidx can be NULL (omitted).
+ * In non-slice case, uidx holds the single subscript and lidx is always NULL.
  */
 typedef struct A_Indices
 {
 	NodeTag		type;
-	Node	   *lidx;			/* NULL if it's a single subscript */
-	Node	   *uidx;
+	bool		is_slice;		/* true if slice (i.e., colon present) */
+	Node	   *lidx;			/* slice lower bound, if any */
+	Node	   *uidx;			/* subscript, or slice upper bound if any */
 } A_Indices;
 
 /*
@@ -1374,6 +1379,7 @@ typedef struct SetOperationStmt
 
 typedef enum ObjectType
 {
+	OBJECT_ACCESS_METHOD,
 	OBJECT_AGGREGATE,
 	OBJECT_AMOP,
 	OBJECT_AMPROC,
@@ -2065,6 +2071,18 @@ typedef struct AlterPolicyStmt
 	Node	   *with_check;		/* the policy's WITH CHECK condition. */
 } AlterPolicyStmt;
 
+/*----------------------
+ *		Create ACCESS METHOD Statement
+ *----------------------
+ */
+typedef struct CreateAmStmt
+{
+	NodeTag		type;
+	char	   *amname;			/* access method name */
+	List	   *handler_name;	/* handler function name */
+	char		amtype;			/* type of access method */
+} CreateAmStmt;
+
 /* ----------------------
  *		Create TRIGGER Statement
  * ----------------------
@@ -2516,6 +2534,20 @@ typedef struct RenameStmt
 	DropBehavior behavior;		/* RESTRICT or CASCADE behavior */
 	bool		missing_ok;		/* skip error if missing? */
 } RenameStmt;
+
+/* ----------------------
+ * ALTER object DEPENDS ON EXTENSION extname
+ * ----------------------
+ */
+typedef struct AlterObjectDependsStmt
+{
+	NodeTag		type;
+	ObjectType	objectType;		/* OBJECT_FUNCTION, OBJECT_TRIGGER, etc */
+	RangeVar   *relation;		/* in case a table is involved */
+	List	   *objname;		/* name of the object */
+	List	   *objargs;		/* argument types, if applicable */
+	Value	   *extname;		/* extension name */
+} AlterObjectDependsStmt;
 
 /* ----------------------
  *		ALTER object SET SCHEMA Statement

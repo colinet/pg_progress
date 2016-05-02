@@ -8,11 +8,13 @@ SUBDIRS = \
 		  brin \
 		  commit_ts \
 		  dummy_seclabel \
+		  snapshot_too_old \
 		  test_ddl_deparse \
 		  test_extensions \
 		  test_parser \
 		  test_rls_hooks \
 		  test_shm_mq \
+		  test_slot_timelines \
 		  worker_spi
 
 all: submake-errcodes

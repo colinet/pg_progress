@@ -1,15 +1,15 @@
 /*
  * psql - the PostgreSQL interactive terminal
  *
- * Copyright (c) 2000-2015, PostgreSQL Global Development Group
+ * Copyright (c) 2000-2016, PostgreSQL Global Development Group
  *
  * src/bin/psql/command.h
  */
 #ifndef COMMAND_H
 #define COMMAND_H
 
-#include "print.h"
-#include "psqlscan.h"
+#include "fe_utils/print.h"
+#include "fe_utils/psqlscan.h"
 
 
 typedef enum _backslashResult

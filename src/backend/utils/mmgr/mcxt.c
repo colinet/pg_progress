@@ -9,7 +9,7 @@
  * context's MemoryContextMethods struct.
  *
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -1051,10 +1051,13 @@ repalloc(void *pointer, Size size)
 
 	ret = (*context->methods->realloc) (context, pointer, size);
 	if (ret == NULL)
+	{
+		MemoryContextStats(TopMemoryContext);
 		ereport(ERROR,
 				(errcode(ERRCODE_OUT_OF_MEMORY),
 				 errmsg("out of memory"),
 				 errdetail("Failed on request of size %zu.", size)));
+	}
 
 	VALGRIND_MEMPOOL_CHANGE(context, pointer, ret, size);
 
@@ -1131,10 +1134,13 @@ repalloc_huge(void *pointer, Size size)
 
 	ret = (*context->methods->realloc) (context, pointer, size);
 	if (ret == NULL)
+	{
+		MemoryContextStats(TopMemoryContext);
 		ereport(ERROR,
 				(errcode(ERRCODE_OUT_OF_MEMORY),
 				 errmsg("out of memory"),
 				 errdetail("Failed on request of size %zu.", size)));
+	}
 
 	VALGRIND_MEMPOOL_CHANGE(context, pointer, ret, size);
 

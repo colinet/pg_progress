@@ -143,7 +143,7 @@ sub Install
 			$target . '/share/tsearch_data/');
 		CopySetOfFiles(
 			'Dictionaries sample files',
-			[ glob("src\\backend\\tsearch\\*_sample.*") ],
+			[ glob("src\\backend\\tsearch\\dicts\\*_sample*") ],
 			$target . '/share/tsearch_data/');
 
 		my $pl_extension_files = [];
@@ -217,7 +217,7 @@ sub CopySolutionOutput
 	my $conf   = shift;
 	my $target = shift;
 	my $rem =
-	  qr{Project\("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}"\) = "([^"]+)"};
+	  qr{Project\("\{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942\}"\) = "([^"]+)"};
 
 	my $sln = read_file("pgsql.sln") || croak "Could not open pgsql.sln\n";
 
@@ -582,7 +582,7 @@ sub CopyIncludeFiles
 		'Public headers', $target . '/include/',
 		'src/include/',   'postgres_ext.h',
 		'pg_config.h',    'pg_config_ext.h',
-		'pg_config_os.h', 'pg_config_manual.h');
+		'pg_config_os.h', 'dynloader.h', 'pg_config_manual.h');
 	lcopy('src/include/libpq/libpq-fs.h', $target . '/include/libpq/')
 	  || croak 'Could not copy libpq-fs.h';
 
@@ -605,7 +605,8 @@ sub CopyIncludeFiles
 	CopyFiles(
 		'Server headers',
 		$target . '/include/server/',
-		'src/include/', 'pg_config.h', 'pg_config_ext.h', 'pg_config_os.h');
+		'src/include/', 'pg_config.h', 'pg_config_ext.h', 'pg_config_os.h',
+		'dynloader.h');
 	CopyFiles(
 		'Grammar header',
 		$target . '/include/server/parser/',

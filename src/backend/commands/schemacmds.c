@@ -3,7 +3,7 @@
  * schemacmds.c
  *	  schema creation/manipulation commands
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -64,6 +64,10 @@ CreateSchemaCommand(CreateSchemaStmt *stmt, const char *queryString)
 		owner_uid = get_rolespec_oid(stmt->authrole, false);
 	else
 		owner_uid = saved_uid;
+
+	/* Additional check to protect reserved role names */
+	check_rolespec_name(stmt->authrole,
+						"Cannot specify reserved role as owner.");
 
 	/* fill schema name with the user name if not specified */
 	if (!schemaName)

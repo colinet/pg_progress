@@ -3,7 +3,7 @@
  * initsplan.c
  *	  Target list, qualification, joininfo initialization routines
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -137,7 +137,7 @@ add_base_rels_to_query(PlannerInfo *root, Node *jtnode)
 /*
  * build_base_rel_tlists
  *	  Add targetlist entries for each var needed in the query's final tlist
- *	  to the appropriate base relations.
+ *	  (and HAVING clause, if any) to the appropriate base relations.
  *
  * We mark such vars as needed by "relation 0" to ensure that they will
  * propagate up through all join plan steps.
@@ -146,13 +146,32 @@ void
 build_base_rel_tlists(PlannerInfo *root, List *final_tlist)
 {
 	List	   *tlist_vars = pull_var_clause((Node *) final_tlist,
-											 PVC_RECURSE_AGGREGATES,
+											 PVC_RECURSE_AGGREGATES |
+											 PVC_RECURSE_WINDOWFUNCS |
 											 PVC_INCLUDE_PLACEHOLDERS);
 
 	if (tlist_vars != NIL)
 	{
 		add_vars_to_targetlist(root, tlist_vars, bms_make_singleton(0), true);
 		list_free(tlist_vars);
+	}
+
+	/*
+	 * If there's a HAVING clause, we'll need the Vars it uses, too.  Note
+	 * that HAVING can contain Aggrefs but not WindowFuncs.
+	 */
+	if (root->parse->havingQual)
+	{
+		List	   *having_vars = pull_var_clause(root->parse->havingQual,
+												  PVC_RECURSE_AGGREGATES |
+												  PVC_INCLUDE_PLACEHOLDERS);
+
+		if (having_vars != NIL)
+		{
+			add_vars_to_targetlist(root, having_vars,
+								   bms_make_singleton(0), true);
+			list_free(having_vars);
+		}
 	}
 }
 
@@ -194,10 +213,11 @@ add_vars_to_targetlist(PlannerInfo *root, List *vars,
 			attno -= rel->min_attr;
 			if (rel->attr_needed[attno] == NULL)
 			{
-				/* Variable not yet requested, so add to reltargetlist */
+				/* Variable not yet requested, so add to rel's targetlist */
 				/* XXX is copyObject necessary here? */
-				rel->reltargetlist = lappend(rel->reltargetlist,
-											 copyObject(var));
+				rel->reltarget->exprs = lappend(rel->reltarget->exprs,
+												copyObject(var));
+				/* reltarget cost and width will be computed later */
 			}
 			rel->attr_needed[attno] = bms_add_members(rel->attr_needed[attno],
 													  where_needed);
@@ -1156,9 +1176,32 @@ make_outerjoininfo(PlannerInfo *root,
 	{
 		SpecialJoinInfo *otherinfo = (SpecialJoinInfo *) lfirst(l);
 
-		/* ignore full joins --- other mechanisms preserve their ordering */
+		/*
+		 * A full join is an optimization barrier: we can't associate into or
+		 * out of it.  Hence, if it overlaps either LHS or RHS of the current
+		 * rel, expand that side's min relset to cover the whole full join.
+		 */
 		if (otherinfo->jointype == JOIN_FULL)
+		{
+			if (bms_overlap(left_rels, otherinfo->syn_lefthand) ||
+				bms_overlap(left_rels, otherinfo->syn_righthand))
+			{
+				min_lefthand = bms_add_members(min_lefthand,
+											   otherinfo->syn_lefthand);
+				min_lefthand = bms_add_members(min_lefthand,
+											   otherinfo->syn_righthand);
+			}
+			if (bms_overlap(right_rels, otherinfo->syn_lefthand) ||
+				bms_overlap(right_rels, otherinfo->syn_righthand))
+			{
+				min_righthand = bms_add_members(min_righthand,
+												otherinfo->syn_lefthand);
+				min_righthand = bms_add_members(min_righthand,
+												otherinfo->syn_righthand);
+			}
+			/* Needn't do anything else with the full join */
 			continue;
+		}
 
 		/*
 		 * For a lower OJ in our LHS, if our join condition uses the lower
@@ -1769,7 +1812,8 @@ distribute_qual_to_rels(PlannerInfo *root, Node *clause,
 	if (bms_membership(relids) == BMS_MULTIPLE)
 	{
 		List	   *vars = pull_var_clause(clause,
-										   PVC_RECURSE_AGGREGATES,
+										   PVC_RECURSE_AGGREGATES |
+										   PVC_RECURSE_WINDOWFUNCS |
 										   PVC_INCLUDE_PLACEHOLDERS);
 
 		add_vars_to_targetlist(root, vars, relids, false);

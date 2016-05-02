@@ -5,7 +5,7 @@
  *	  However, we define it here so that the format is documented.
  *
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/catalog/pg_control.h
@@ -46,15 +46,15 @@ typedef struct CheckPoint
 	MultiXactId oldestMulti;	/* cluster-wide minimum datminmxid */
 	Oid			oldestMultiDB;	/* database with minimum datminmxid */
 	pg_time_t	time;			/* time stamp of checkpoint */
-	TransactionId oldestCommitTs;		/* oldest Xid with valid commit
+	TransactionId oldestCommitTsXid;	/* oldest Xid with valid commit
 										 * timestamp */
-	TransactionId newestCommitTs;		/* newest Xid with valid commit
+	TransactionId newestCommitTsXid;	/* newest Xid with valid commit
 										 * timestamp */
 
 	/*
 	 * Oldest XID still running. This is only needed to initialize hot standby
 	 * mode from an online checkpoint, so we only bother calculating this for
-	 * online checkpoints and only when wal_level is hot_standby. Otherwise
+	 * online checkpoints and only when wal_level is replica. Otherwise
 	 * it's set to InvalidTransactionId.
 	 */
 	TransactionId oldestActiveXid;

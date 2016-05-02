@@ -2,7 +2,7 @@
  *
  * pg_dumpall.c
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * pg_dumpall forces all pg_dump output to be text, since it also outputs
@@ -26,6 +26,7 @@
 
 #include "dumputils.h"
 #include "pg_backup.h"
+#include "fe_utils/string_utils.h"
 
 /* version string we expect back from pg_dump */
 #define PGDUMP_VERSIONSTR "pg_dump (PostgreSQL) " PG_VERSION "\n"
@@ -664,7 +665,7 @@ dumpRoles(PGconn *conn)
 	int			i;
 
 	/* note: rolconfig is dumped later */
-	if (server_version >= 90500)
+	if (server_version >= 90600)
 		printfPQExpBuffer(buf,
 						  "SELECT oid, rolname, rolsuper, rolinherit, "
 						  "rolcreaterole, rolcreatedb, "
@@ -673,6 +674,7 @@ dumpRoles(PGconn *conn)
 			 "pg_catalog.shobj_description(oid, 'pg_authid') as rolcomment, "
 						  "rolname = current_user AS is_current_user "
 						  "FROM pg_authid "
+						  "WHERE rolname !~ '^pg_' "
 						  "ORDER BY 2");
 	else if (server_version >= 90100)
 		printfPQExpBuffer(buf,
@@ -769,6 +771,13 @@ dumpRoles(PGconn *conn)
 
 		auth_oid = atooid(PQgetvalue(res, i, i_oid));
 		rolename = PQgetvalue(res, i, i_rolname);
+
+		if (strncmp(rolename,"pg_",3) == 0)
+		{
+			fprintf(stderr, _("%s: role name starting with \"pg_\" skipped (%s)\n"),
+					progname, rolename);
+			continue;
+		}
 
 		resetPQExpBuffer(buf);
 
@@ -895,6 +904,7 @@ dumpRoleMembership(PGconn *conn)
 					   "LEFT JOIN pg_authid ur on ur.oid = a.roleid "
 					   "LEFT JOIN pg_authid um on um.oid = a.member "
 					   "LEFT JOIN pg_authid ug on ug.oid = a.grantor "
+					   "WHERE NOT (ur.rolname ~ '^pg_' AND um.rolname ~ '^pg_')"
 					   "ORDER BY 1,2,3");
 
 	if (PQntuples(res) > 0)
@@ -1112,8 +1122,8 @@ dumpTablespaces(PGconn *conn)
 							  fspcname, spcoptions);
 
 		if (!skip_acls &&
-			!buildACLCommands(fspcname, NULL, "TABLESPACE", spcacl, spcowner,
-							  "", server_version, buf))
+			!buildACLCommands(fspcname, NULL, "TABLESPACE", spcacl, "",
+							  spcowner, "", server_version, buf))
 		{
 			fprintf(stderr, _("%s: could not parse ACL list (%s) for tablespace \"%s\"\n"),
 					progname, spcacl, fspcname);
@@ -1415,8 +1425,8 @@ dumpCreateDB(PGconn *conn)
 		else if (strcmp(dbtablespace, "pg_default") != 0 && !no_tablespaces)
 		{
 			/*
-			 * Cannot change tablespace of the database we're connected to,
-			 * so to move "postgres" to another tablespace, we connect to
+			 * Cannot change tablespace of the database we're connected to, so
+			 * to move "postgres" to another tablespace, we connect to
 			 * "template1", and vice versa.
 			 */
 			if (strcmp(dbname, "postgres") == 0)
@@ -1443,7 +1453,7 @@ dumpCreateDB(PGconn *conn)
 		}
 
 		if (!skip_acls &&
-			!buildACLCommands(fdbname, NULL, "DATABASE", dbacl, dbowner,
+			!buildACLCommands(fdbname, NULL, "DATABASE", dbacl, "", dbowner,
 							  "", server_version, buf))
 		{
 			fprintf(stderr, _("%s: could not parse ACL list (%s) for database \"%s\"\n"),

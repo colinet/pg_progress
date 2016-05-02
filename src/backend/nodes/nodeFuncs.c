@@ -3,7 +3,7 @@
  * nodeFuncs.c
  *		Various general-purpose manipulations of Node trees
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -57,7 +57,7 @@ exprType(const Node *expr)
 			type = ((const Param *) expr)->paramtype;
 			break;
 		case T_Aggref:
-			type = ((const Aggref *) expr)->aggtype;
+			type = ((const Aggref *) expr)->aggoutputtype;
 			break;
 		case T_GroupingFunc:
 			type = INT4OID;
@@ -3425,7 +3425,9 @@ raw_expression_tree_walker(Node *node,
  * recurse into any sub-nodes it has.
  */
 bool
-planstate_tree_walker(PlanState *planstate, bool (*walker) (), void *context)
+planstate_tree_walker(PlanState *planstate,
+					  bool (*walker) (),
+					  void *context)
 {
 	Plan	   *plan = planstate->plan;
 	ListCell   *lc;
@@ -3507,7 +3509,9 @@ planstate_tree_walker(PlanState *planstate, bool (*walker) (), void *context)
  * Walk a list of SubPlans (or initPlans, which also use SubPlan nodes).
  */
 static bool
-planstate_walk_subplans(List *plans, bool (*walker) (), void *context)
+planstate_walk_subplans(List *plans,
+						bool (*walker) (),
+						void *context)
 {
 	ListCell   *lc;
 

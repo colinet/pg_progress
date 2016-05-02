@@ -7,7 +7,7 @@
  *	 ExecProcNode, or ExecEndNode on its subnodes and do the appropriate
  *	 processing.
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -72,7 +72,7 @@
  *
  *		This should show how the executor works by having
  *		ExecInitNode(), ExecProcNode() and ExecEndNode() dispatch
- *		their work to the appopriate node support routines which may
+ *		their work to the appropriate node support routines which may
  *		in turn call these routines themselves on their subplans.
  */
 #include "postgres.h"

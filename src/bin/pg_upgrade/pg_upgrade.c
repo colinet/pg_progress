@@ -3,7 +3,7 @@
  *
  *	main source file
  *
- *	Copyright (c) 2010-2015, PostgreSQL Global Development Group
+ *	Copyright (c) 2010-2016, PostgreSQL Global Development Group
  *	src/bin/pg_upgrade/pg_upgrade.c
  */
 
@@ -260,8 +260,6 @@ prepare_new_cluster(void)
 			  new_cluster.bindir, cluster_conn_opts(&new_cluster),
 			  log_opts.verbose ? "--verbose" : "");
 	check_ok();
-
-	get_pg_database_relfilenode(&new_cluster);
 }
 
 

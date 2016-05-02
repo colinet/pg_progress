@@ -9,7 +9,7 @@
  * in cluster.c.
  *
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -489,7 +489,8 @@ vacuum_set_xid_limits(Relation rel,
 	 * working on a particular table at any time, and that each vacuum is
 	 * always an independent transaction.
 	 */
-	*oldestXmin = GetOldestXmin(rel, true);
+	*oldestXmin =
+		TransactionIdLimitedForOldSnapshots(GetOldestXmin(rel, true), rel);
 
 	Assert(TransactionIdIsNormal(*oldestXmin));
 
@@ -1151,7 +1152,7 @@ vac_truncate_clog(TransactionId frozenXID,
 	 */
 	SetTransactionIdLimit(frozenXID, oldestxid_datoid);
 	SetMultiXactIdLimit(minMulti, minmulti_datoid);
-	AdvanceOldestCommitTs(frozenXID);
+	AdvanceOldestCommitTsXid(frozenXID);
 }
 
 

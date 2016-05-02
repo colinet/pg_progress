@@ -4,7 +4,7 @@
  *		Routines for handling specialized SET variables.
  *
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -482,11 +482,13 @@ show_log_timezone(void)
  * nothing since XactReadOnly will be reset by the next StartTransaction().
  * The IsTransactionState() test protects us against trying to check
  * RecoveryInProgress() in contexts where shared memory is not accessible.
+ * (Similarly, if we're restoring state in a parallel worker, just allow
+ * the change.)
  */
 bool
 check_transaction_read_only(bool *newval, void **extra, GucSource source)
 {
-	if (*newval == false && XactReadOnly && IsTransactionState())
+	if (*newval == false && XactReadOnly && IsTransactionState() && !InitializingParallelWorker)
 	{
 		/* Can't go to r/w mode inside a r/o transaction */
 		if (IsSubTransaction())
@@ -792,6 +794,10 @@ check_session_authorization(char **newval, void **extra, GucSource source)
 		return false;
 	}
 
+	/* Do not allow setting role to a reserved role. */
+	if (strncmp(*newval, "pg_", 3) == 0)
+		return false;
+
 	/* Look up the username */
 	roleTup = SearchSysCache1(AUTHNAME, PointerGetDatum(*newval));
 	if (!HeapTupleIsValid(roleTup))
@@ -852,6 +858,9 @@ check_role(char **newval, void **extra, GucSource source)
 		roleid = InvalidOid;
 		is_superuser = false;
 	}
+	/* Do not allow setting role to a reserved role. */
+	else if (strncmp(*newval, "pg_", 3) == 0)
+		return false;
 	else
 	{
 		if (!IsTransactionState())

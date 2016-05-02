@@ -3,7 +3,7 @@
  * hashsearch.c
  *	  search code for postgres hash tables
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -188,7 +188,9 @@ _hash_first(IndexScanDesc scan, ScanDirection dir)
 
 	/* Read the metapage */
 	metabuf = _hash_getbuf(rel, HASH_METAPAGE, HASH_READ, LH_META_PAGE);
-	metap = HashPageGetMeta(BufferGetPage(metabuf));
+	page = BufferGetPage(metabuf);
+	TestForOldSnapshot(scan->xs_snapshot, rel, page);
+	metap = HashPageGetMeta(page);
 
 	/*
 	 * Loop until we get a lock on the correct target bucket.
@@ -241,6 +243,7 @@ _hash_first(IndexScanDesc scan, ScanDirection dir)
 	/* Fetch the primary bucket page for the bucket */
 	buf = _hash_getbuf(rel, blkno, HASH_READ, LH_BUCKET_PAGE);
 	page = BufferGetPage(buf);
+	TestForOldSnapshot(scan->xs_snapshot, rel, page);
 	opaque = (HashPageOpaque) PageGetSpecialPointer(page);
 	Assert(opaque->hasho_bucket == bucket);
 
@@ -347,6 +350,7 @@ _hash_step(IndexScanDesc scan, Buffer *bufP, ScanDirection dir)
 					_hash_readnext(rel, &buf, &page, &opaque);
 					if (BufferIsValid(buf))
 					{
+						TestForOldSnapshot(scan->xs_snapshot, rel, page);
 						maxoff = PageGetMaxOffsetNumber(page);
 						offnum = _hash_binsearch(page, so->hashso_sk_hash);
 					}
@@ -388,6 +392,7 @@ _hash_step(IndexScanDesc scan, Buffer *bufP, ScanDirection dir)
 					_hash_readprev(rel, &buf, &page, &opaque);
 					if (BufferIsValid(buf))
 					{
+						TestForOldSnapshot(scan->xs_snapshot, rel, page);
 						maxoff = PageGetMaxOffsetNumber(page);
 						offnum = _hash_binsearch_last(page, so->hashso_sk_hash);
 					}

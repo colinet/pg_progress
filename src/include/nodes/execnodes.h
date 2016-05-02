@@ -4,7 +4,7 @@
  *	  definitions for executor state nodes
  *
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/nodes/execnodes.h
@@ -311,6 +311,7 @@ typedef struct JunkFilter
  *		TrigInstrument			optional runtime measurements for triggers
  *		FdwRoutine				FDW callback functions, if foreign table
  *		FdwState				available to save private state of FDW
+ *		usesFdwDirectModify		true when modifying foreign table directly
  *		WithCheckOptions		list of WithCheckOption's to be checked
  *		WithCheckOptionExprs	list of WithCheckOption expr states
  *		ConstraintExprs			array of constraint-checking expr states
@@ -334,6 +335,7 @@ typedef struct ResultRelInfo
 	Instrumentation *ri_TrigInstrument;
 	struct FdwRoutine *ri_FdwRoutine;
 	void	   *ri_FdwState;
+	bool		ri_usesFdwDirectModify;
 	List	   *ri_WithCheckOptions;
 	List	   *ri_WithCheckOptionExprs;
 	List	  **ri_ConstraintExprs;
@@ -387,7 +389,7 @@ typedef struct EState
 
 	List	   *es_rowMarks;	/* List of ExecRowMarks */
 
-	uint32		es_processed;	/* # of tuples processed */
+	uint64		es_processed;	/* # of tuples processed */
 	Oid			es_lastoid;		/* last oid processed (by INSERT) */
 
 	int			es_top_eflags;	/* eflags passed to ExecutorStart */
@@ -1585,6 +1587,7 @@ typedef struct ForeignScanState
 {
 	ScanState	ss;				/* its first field is NodeTag */
 	List	   *fdw_recheck_quals;	/* original quals not in ss.ps.qual */
+	Size		pscan_len;		/* size of parallel coordination information */
 	/* use struct pointer to avoid including fdwapi.h here */
 	struct FdwRoutine *fdwroutine;
 	void	   *fdw_state;		/* foreign-data wrapper can keep state here */
@@ -1603,35 +1606,15 @@ typedef struct ForeignScanState
  * the BeginCustomScan method.
  * ----------------
  */
-struct ExplainState;			/* avoid including explain.h here */
-struct CustomScanState;
-
-typedef struct CustomExecMethods
-{
-	const char *CustomName;
-
-	/* Executor methods: mark/restore are optional, the rest are required */
-	void		(*BeginCustomScan) (struct CustomScanState *node,
-												EState *estate,
-												int eflags);
-	TupleTableSlot *(*ExecCustomScan) (struct CustomScanState *node);
-	void		(*EndCustomScan) (struct CustomScanState *node);
-	void		(*ReScanCustomScan) (struct CustomScanState *node);
-	void		(*MarkPosCustomScan) (struct CustomScanState *node);
-	void		(*RestrPosCustomScan) (struct CustomScanState *node);
-
-	/* Optional: print additional information in EXPLAIN */
-	void		(*ExplainCustomScan) (struct CustomScanState *node,
-												  List *ancestors,
-												  struct ExplainState *es);
-} CustomExecMethods;
+struct CustomExecMethods;
 
 typedef struct CustomScanState
 {
 	ScanState	ss;
 	uint32		flags;			/* mask of CUSTOMPATH_* flags, see relation.h */
 	List	   *custom_ps;		/* list of child PlanState nodes, if any */
-	const CustomExecMethods *methods;
+	Size		pscan_len;		/* size of parallel coordination information */
+	const struct CustomExecMethods *methods;
 } CustomScanState;
 
 /* ----------------------------------------------------------------
@@ -1851,6 +1834,9 @@ typedef struct AggState
 	AggStatePerTrans curpertrans;	/* currently active trans state */
 	bool		input_done;		/* indicates end of input */
 	bool		agg_done;		/* indicates completion of Agg scan */
+	bool		combineStates;	/* input tuples contain transition states */
+	bool		finalizeAggs;	/* should we call the finalfn on agg states? */
+	bool		serialStates;	/* should agg states be (de)serialized? */
 	int			projected_set;	/* The last projected grouping set */
 	int			current_set;	/* The current grouping set being evaluated */
 	Bitmapset  *grouped_cols;	/* grouped cols in current projection */
@@ -1970,6 +1956,7 @@ typedef struct GatherState
 	struct ParallelExecutorInfo *pei;
 	int			nreaders;
 	int			nextreader;
+	int			nworkers_launched;
 	struct TupleQueueReader **reader;
 	TupleTableSlot *funnel_slot;
 	bool		need_to_scan_locally;

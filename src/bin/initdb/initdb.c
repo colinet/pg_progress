@@ -38,7 +38,7 @@
  *
  * This code is released under the terms of the PostgreSQL License.
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/bin/initdb/initdb.c
@@ -90,6 +90,9 @@ static const char *const auth_methods_host[] = {
 #ifdef USE_PAM
 	"pam", "pam ",
 #endif
+#ifdef USE_BSD_AUTH
+	"bsd",
+#endif
 #ifdef USE_LDAP
 	"ldap",
 #endif
@@ -102,6 +105,9 @@ static const char *const auth_methods_local[] = {
 	"trust", "reject", "md5", "password", "peer", "radius",
 #ifdef USE_PAM
 	"pam", "pam ",
+#endif
+#ifdef USE_BSD_AUTH
+	"bsd",
 #endif
 #ifdef USE_LDAP
 	"ldap",
@@ -193,7 +199,6 @@ static const char *backend_options = "--single -F -O -j -c search_path=pg_catalo
 
 static const char *const subdirs[] = {
 	"global",
-	"pg_xlog",
 	"pg_xlog/archive_status",
 	"pg_clog",
 	"pg_commit_ts",
@@ -203,6 +208,7 @@ static const char *const subdirs[] = {
 	"pg_snapshots",
 	"pg_subtrans",
 	"pg_twophase",
+	"pg_multixact",
 	"pg_multixact/members",
 	"pg_multixact/offsets",
 	"base",
@@ -240,7 +246,6 @@ static FILE *popen_check(const char *command, const char *mode);
 static void exit_nicely(void);
 static char *get_id(void);
 static char *get_encoding_id(char *encoding_name);
-static bool mkdatadir(const char *subdir);
 static void set_input(char **dest, char *filename);
 static void check_input(char *path);
 static void write_version_file(char *extrapath);
@@ -280,7 +285,7 @@ void		setup_locale_encoding(void);
 void		setup_signals(void);
 void		setup_text_search(void);
 void		create_data_directory(void);
-void		create_xlog_symlink(void);
+void		create_xlog_or_symlink(void);
 void		warn_on_mount_point(int error);
 void		initialize_data_directory(void);
 
@@ -925,29 +930,6 @@ find_matching_ts_config(const char *lc_type)
 
 	free(langname);
 	return NULL;
-}
-
-
-/*
- * make the data directory (or one of its subdirectories if subdir is not NULL)
- */
-static bool
-mkdatadir(const char *subdir)
-{
-	char	   *path;
-
-	if (subdir)
-		path = psprintf("%s/%s", pg_data, subdir);
-	else
-		path = pg_strdup(pg_data);
-
-	if (pg_mkdir_p(path, S_IRWXU) == 0)
-		return true;
-
-	fprintf(stderr, _("%s: could not create directory \"%s\": %s\n"),
-			progname, path, strerror(errno));
-
-	return false;
 }
 
 
@@ -1781,6 +1763,13 @@ setup_description(FILE *cmdfd)
 				"  WHERE opdesc NOT LIKE 'deprecated%' AND "
 				"  NOT EXISTS (SELECT 1 FROM pg_description "
 		"    WHERE objoid = p_oid AND classoid = 'pg_proc'::regclass);\n\n");
+
+	/*
+	 * Even though the tables are temp, drop them explicitly so they don't get
+	 * copied into template0/postgres databases.
+	 */
+	PG_CMD_PUTS("DROP TABLE tmp_pg_description;\n\n");
+	PG_CMD_PUTS("DROP TABLE tmp_pg_shdescription;\n\n");
 }
 
 #ifdef HAVE_LOCALE_T
@@ -1941,6 +1930,12 @@ setup_collation(FILE *cmdfd)
 				"  WHERE NOT EXISTS (SELECT 1 FROM pg_collation WHERE collname = tmp_pg_collation.collname)"
 	 "  ORDER BY collname, encoding, (collname = locale) DESC, locale;\n\n");
 
+	/*
+	 * Even though the table is temp, drop it explicitly so it doesn't get
+	 * copied into template0/postgres databases.
+	 */
+	PG_CMD_PUTS("DROP TABLE tmp_pg_collation;\n\n");
+
 	pclose(locale_a_handle);
 
 	if (count == 0 && !debug)
@@ -2000,6 +1995,11 @@ setup_dictionary(FILE *cmdfd)
  * Some objects may require different permissions by default, so we
  * make sure we don't overwrite privilege sets that have already been
  * set (NOT NULL).
+ *
+ * Also populate pg_init_privs to save what the privileges are at init
+ * time.  This is used by pg_dump to allow users to change privileges
+ * on catalog objects and to have those privilege changes preserved
+ * across dump/reload and pg_upgrade.
  */
 static void
 setup_privileges(FILE *cmdfd)
@@ -2008,11 +2008,153 @@ setup_privileges(FILE *cmdfd)
 	char	  **priv_lines;
 	static char *privileges_setup[] = {
 		"UPDATE pg_class "
-		"  SET relacl = E'{\"=r/\\\\\"$POSTGRES_SUPERUSERNAME\\\\\"\"}' "
+		"  SET relacl = (SELECT array_agg(a.acl) FROM "
+		" (SELECT E'=r/\"$POSTGRES_SUPERUSERNAME\"' as acl "
+		"  UNION SELECT unnest(pg_catalog.acldefault("
+		"    CASE WHEN relkind = 'S' THEN 's' ELSE 'r' END::\"char\",10::oid))"
+		" ) as a) "
 		"  WHERE relkind IN ('r', 'v', 'm', 'S') AND relacl IS NULL;\n\n",
 		"GRANT USAGE ON SCHEMA pg_catalog TO PUBLIC;\n\n",
 		"GRANT CREATE, USAGE ON SCHEMA public TO PUBLIC;\n\n",
 		"REVOKE ALL ON pg_largeobject FROM PUBLIC;\n\n",
+		"INSERT INTO pg_init_privs "
+		"  (objoid, classoid, objsubid, initprivs, privtype)"
+		"    SELECT"
+		"        oid,"
+		"        (SELECT oid FROM pg_class WHERE relname = 'pg_class'),"
+		"        0,"
+		"        relacl,"
+		"        'i'"
+		"    FROM"
+		"        pg_class"
+		"    WHERE"
+		"        relacl IS NOT NULL"
+		"        AND relkind IN ('r', 'v', 'm', 'S');",
+		"INSERT INTO pg_init_privs "
+		"  (objoid, classoid, objsubid, initprivs, privtype)"
+		"    SELECT"
+		"        pg_class.oid,"
+		"        (SELECT oid FROM pg_class WHERE relname = 'pg_class'),"
+		"        pg_attribute.attnum,"
+		"        pg_attribute.attacl,"
+		"        'i'"
+		"    FROM"
+		"        pg_class"
+		"        JOIN pg_attribute ON (pg_class.oid = pg_attribute.attrelid)"
+		"    WHERE"
+		"        pg_attribute.attacl IS NOT NULL"
+		"        AND pg_class.relkind IN ('r', 'v', 'm', 'S');",
+		"INSERT INTO pg_init_privs "
+		"  (objoid, classoid, objsubid, initprivs, privtype)"
+		"    SELECT"
+		"        oid,"
+		"        (SELECT oid FROM pg_class WHERE relname = 'pg_proc'),"
+		"        0,"
+		"        proacl,"
+		"        'i'"
+		"    FROM"
+		"        pg_proc"
+		"    WHERE"
+		"        proacl IS NOT NULL;",
+		"INSERT INTO pg_init_privs "
+		"  (objoid, classoid, objsubid, initprivs, privtype)"
+		"    SELECT"
+		"        oid,"
+		"        (SELECT oid FROM pg_class WHERE relname = 'pg_type'),"
+		"        0,"
+		"        typacl,"
+		"        'i'"
+		"    FROM"
+		"        pg_type"
+		"    WHERE"
+		"        typacl IS NOT NULL;",
+		"INSERT INTO pg_init_privs "
+		"  (objoid, classoid, objsubid, initprivs, privtype)"
+		"    SELECT"
+		"        oid,"
+		"        (SELECT oid FROM pg_class WHERE relname = 'pg_language'),"
+		"        0,"
+		"        lanacl,"
+		"        'i'"
+		"    FROM"
+		"        pg_language"
+		"    WHERE"
+		"        lanacl IS NOT NULL;",
+		"INSERT INTO pg_init_privs "
+		"  (objoid, classoid, objsubid, initprivs, privtype)"
+		"    SELECT"
+		"        oid,"
+		"        (SELECT oid FROM pg_class WHERE "
+		"		  relname = 'pg_largeobject_metadata'),"
+		"        0,"
+		"        lomacl,"
+		"        'i'"
+		"    FROM"
+		"        pg_largeobject_metadata"
+		"    WHERE"
+		"        lomacl IS NOT NULL;",
+		"INSERT INTO pg_init_privs "
+		"  (objoid, classoid, objsubid, initprivs, privtype)"
+		"    SELECT"
+		"        oid,"
+		"        (SELECT oid FROM pg_class WHERE relname = 'pg_namespace'),"
+		"        0,"
+		"        nspacl,"
+		"        'i'"
+		"    FROM"
+		"        pg_namespace"
+		"    WHERE"
+		"        nspacl IS NOT NULL;",
+		"INSERT INTO pg_init_privs "
+		"  (objoid, classoid, objsubid, initprivs, privtype)"
+		"    SELECT"
+		"        oid,"
+		"        (SELECT oid FROM pg_class WHERE relname = 'pg_database'),"
+		"        0,"
+		"        datacl,"
+		"        'i'"
+		"    FROM"
+		"        pg_database"
+		"    WHERE"
+		"        datacl IS NOT NULL;",
+		"INSERT INTO pg_init_privs "
+		"  (objoid, classoid, objsubid, initprivs, privtype)"
+		"    SELECT"
+		"        oid,"
+		"        (SELECT oid FROM pg_class WHERE relname = 'pg_tablespace'),"
+		"        0,"
+		"        spcacl,"
+		"        'i'"
+		"    FROM"
+		"        pg_tablespace"
+		"    WHERE"
+		"        spcacl IS NOT NULL;",
+		"INSERT INTO pg_init_privs "
+		"  (objoid, classoid, objsubid, initprivs, privtype)"
+		"    SELECT"
+		"        oid,"
+		"        (SELECT oid FROM pg_class WHERE "
+		"		  relname = 'pg_foreign_data_wrapper'),"
+		"        0,"
+		"        fdwacl,"
+		"        'i'"
+		"    FROM"
+		"        pg_foreign_data_wrapper"
+		"    WHERE"
+		"        fdwacl IS NOT NULL;",
+		"INSERT INTO pg_init_privs "
+		"  (objoid, classoid, objsubid, initprivs, privtype)"
+		"    SELECT"
+		"        oid,"
+		"        (SELECT oid FROM pg_class "
+		"		  WHERE relname = 'pg_foreign_server'),"
+		"        0,"
+		"        srvacl,"
+		"        'i'"
+		"    FROM"
+		"        pg_foreign_server"
+		"    WHERE"
+		"        srvacl IS NOT NULL;",
 		NULL
 	};
 
@@ -2130,7 +2272,7 @@ make_template0(FILE *cmdfd)
 		/*
 		 * Finally vacuum to clean up dead rows in pg_database
 		 */
-		"VACUUM FULL pg_database;\n\n",
+		"VACUUM pg_database;\n\n",
 		NULL
 	};
 
@@ -2902,8 +3044,12 @@ create_data_directory(void)
 				   pg_data);
 			fflush(stdout);
 
-			if (!mkdatadir(NULL))
+			if (pg_mkdir_p(pg_data, S_IRWXU) != 0)
+			{
+				fprintf(stderr, _("%s: could not create directory \"%s\": %s\n"),
+						progname, pg_data, strerror(errno));
 				exit_nicely();
+			}
 			else
 				check_ok();
 
@@ -2954,13 +3100,17 @@ create_data_directory(void)
 }
 
 
+/* Create transaction log directory, and symlink if required */
 void
-create_xlog_symlink(void)
+create_xlog_or_symlink(void)
 {
-	/* Create transaction log symlink, if required */
+	char	   *subdirloc;
+
+	/* form name of the place for the subdirectory or symlink */
+	subdirloc = psprintf("%s/pg_xlog", pg_data);
+
 	if (strcmp(xlog_dir, "") != 0)
 	{
-		char	   *linkloc;
 		int			ret;
 
 		/* clean up xlog directory name, check it's absolute */
@@ -3033,22 +3183,30 @@ create_xlog_symlink(void)
 				exit_nicely();
 		}
 
-		/* form name of the place where the symlink must go */
-		linkloc = psprintf("%s/pg_xlog", pg_data);
-
 #ifdef HAVE_SYMLINK
-		if (symlink(xlog_dir, linkloc) != 0)
+		if (symlink(xlog_dir, subdirloc) != 0)
 		{
 			fprintf(stderr, _("%s: could not create symbolic link \"%s\": %s\n"),
-					progname, linkloc, strerror(errno));
+					progname, subdirloc, strerror(errno));
 			exit_nicely();
 		}
 #else
 		fprintf(stderr, _("%s: symlinks are not supported on this platform"));
 		exit_nicely();
 #endif
-		free(linkloc);
 	}
+	else
+	{
+		/* Without -X option, just make the subdirectory normally */
+		if (mkdir(subdirloc, S_IRWXU) < 0)
+		{
+			fprintf(stderr, _("%s: could not create directory \"%s\": %s\n"),
+					progname, subdirloc, strerror(errno));
+			exit_nicely();
+		}
+	}
+
+	free(subdirloc);
 }
 
 
@@ -3080,16 +3238,30 @@ initialize_data_directory(void)
 
 	create_data_directory();
 
-	create_xlog_symlink();
+	create_xlog_or_symlink();
 
-	/* Create required subdirectories */
+	/* Create required subdirectories (other than pg_xlog) */
 	printf(_("creating subdirectories ... "));
 	fflush(stdout);
 
-	for (i = 0; i < (sizeof(subdirs) / sizeof(char *)); i++)
+	for (i = 0; i < lengthof(subdirs); i++)
 	{
-		if (!mkdatadir(subdirs[i]))
+		char	   *path;
+
+		path = psprintf("%s/%s", pg_data, subdirs[i]);
+
+		/*
+		 * The parent directory already exists, so we only need mkdir() not
+		 * pg_mkdir_p() here, which avoids some failure modes; cf bug #13853.
+		 */
+		if (mkdir(path, S_IRWXU) < 0)
+		{
+			fprintf(stderr, _("%s: could not create directory \"%s\": %s\n"),
+					progname, path, strerror(errno));
 			exit_nicely();
+		}
+
+		free(path);
 	}
 
 	check_ok();

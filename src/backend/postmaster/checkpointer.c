@@ -26,7 +26,7 @@
  * restart needs to be forced.)
  *
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  *
  *
  * IDENTIFICATION
@@ -273,6 +273,7 @@ CheckpointerMain(void)
 		 * files.
 		 */
 		LWLockReleaseAll();
+		pgstat_report_wait_end();
 		AbortBufferIO();
 		UnlockBuffers();
 		/* buffer pins are released here: */
