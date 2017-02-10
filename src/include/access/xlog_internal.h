@@ -65,7 +65,7 @@ typedef struct XLogLongPageHeaderData
 {
 	XLogPageHeaderData std;		/* standard header fields */
 	uint64		xlp_sysid;		/* system identifier from pg_control */
-	uint32		xlp_seg_size;	/* just as a cross-check */
+	uint32		xlp_seg_size;	/* each physical segment size can have a different size */
 	uint32		xlp_xlog_blcksz;	/* just as a cross-check */
 } XLogLongPageHeaderData;
 
@@ -89,7 +89,8 @@ typedef XLogLongPageHeaderData *XLogLongPageHeader;
  * The XLOG is split into WAL segments (physical files) of the size indicated
  * by XLOG_SEG_SIZE.
  */
-#define XLogSegSize		((uint32) XLOG_SEG_SIZE)
+#define XLogSegBaseSize		((uint32) XLOG_SEG_SIZE)
+#define XLogSegSize		XLogSegBaseSize
 #define XLogSegmentsPerXLogId	(UINT64CONST(0x100000000) / XLOG_SEG_SIZE)
 
 #define XLogSegNoOffsetToRecPtr(segno, offset, dest) \

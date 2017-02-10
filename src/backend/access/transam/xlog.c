@@ -542,6 +542,13 @@ typedef struct XLogCtlInsert
 	bool		fullPageWrites;
 
 	/*
+  	 * current_seg_size is the current segment size which may be changed at every WAL
+  	 * switch after such change has been done in share memory and in control file.
+  	 */
+	uint32 current_seg_size;	/* defined based on last used WAL file size */
+	uint32 next_seg_size;		/* defined based on control file, guc and command */
+
+	/*
 	 * exclusiveBackupState indicates the state of an exclusive backup
 	 * (see comments of ExclusiveBackupState for more details).
 	 * nonExclusiveBackups is a counter indicating the number of streaming
