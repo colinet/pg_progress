@@ -451,6 +451,11 @@ InitializeLWLocks(void)
 	for (id = 0; id < NUM_PREDICATELOCK_PARTITIONS; id++, lock++)
 		LWLockInitialize(&lock->lock, LWTRANCHE_PREDICATE_LOCK_MANAGER);
 
+	/* Initialize progress LWLocks in main array for MaxBackends */
+	lock = MainLWLockArray + NUM_INDIVIDUAL_LWLOCKS +
+		NUM_BUFFER_PARTITIONS + NUM_LOCK_PARTITIONS +
+		NUM_PREDICATELOCK_PARTITIONS;
+
 	/* Initialize named tranches. */
 	if (NamedLWLockTrancheRequests > 0)
 	{
@@ -494,7 +499,7 @@ RegisterLWLockTranches(void)
 
 	if (LWLockTrancheArray == NULL)
 	{
-		LWLockTranchesAllocated = 64;
+		LWLockTranchesAllocated = 65;
 		LWLockTrancheArray = (char **)
 			MemoryContextAllocZero(TopMemoryContext,
 						  LWLockTranchesAllocated * sizeof(char *));

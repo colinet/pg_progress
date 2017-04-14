@@ -66,6 +66,7 @@ typedef enum
 extern Bitmapset *bms_copy(const Bitmapset *a);
 extern bool bms_equal(const Bitmapset *a, const Bitmapset *b);
 extern Bitmapset *bms_make_singleton(int x);
+extern Bitmapset *bms_prealloc(int max);
 extern void bms_free(Bitmapset *a);
 
 extern Bitmapset *bms_union(const Bitmapset *a, const Bitmapset *b);

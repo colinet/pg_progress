@@ -664,9 +664,14 @@ BitmapHeapRecheck(BitmapHeapScanState *node, TupleTableSlot *slot)
 TupleTableSlot *
 ExecBitmapHeapScan(BitmapHeapScanState *node)
 {
-	return ExecScan(&node->ss,
+	TupleTableSlot *hold;
+
+	hold = ExecScan(&node->ss,
 					(ExecScanAccessMtd) BitmapHeapNext,
 					(ExecScanRecheckMtd) BitmapHeapRecheck);
+
+	return hold;	
+
 }
 
 /* ----------------------------------------------------------------
@@ -826,6 +831,12 @@ ExecInitBitmapHeapScan(BitmapHeapScan *node, EState *estate, int eflags)
 	scanstate->initialized = false;
 	scanstate->shared_tbmiterator = NULL;
 	scanstate->pstate = NULL;
+
+	/*
+	 * Initialize percent done
+	 */
+	//scanstate->ss.ps.percent_done = 0;
+	//scanstate->ss.ps.plan_rows = 0;
 
 	/*
 	 * Miscellaneous initialization

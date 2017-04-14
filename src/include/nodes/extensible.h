@@ -19,6 +19,7 @@
 #include "nodes/execnodes.h"
 #include "nodes/plannodes.h"
 #include "nodes/relation.h"
+#include "executor/progress.h"
 
 /* maximum length of an extensible node identifier */
 #define EXTNODENAME_MAX_LEN					64
@@ -144,7 +145,10 @@ typedef struct CustomExecMethods
 	/* Optional: print additional information in EXPLAIN */
 	void		(*ExplainCustomScan) (CustomScanState *node,
 												  List *ancestors,
-												  ExplainState *es);
+												  ReportState *es);
+	
+	/* Optional: report execution progress state for PROGRESS */
+	void (*ProgressCustomScan)(CustomScanState *node, List *ancestors, ReportState *ps);
 } CustomExecMethods;
 
 extern void RegisterCustomScanMethods(const CustomScanMethods *methods);

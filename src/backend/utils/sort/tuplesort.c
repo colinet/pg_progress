@@ -224,20 +224,6 @@ typedef union SlabSlot
 } SlabSlot;
 
 /*
- * Possible states of a Tuplesort object.  These denote the states that
- * persist between calls of Tuplesort routines.
- */
-typedef enum
-{
-	TSS_INITIAL,				/* Loading tuples; still within memory limit */
-	TSS_BOUNDED,				/* Loading tuples into bounded-size heap */
-	TSS_BUILDRUNS,				/* Loading tuples; writing to tape */
-	TSS_SORTEDINMEM,			/* Sort completed entirely in memory */
-	TSS_SORTEDONTAPE,			/* Sort completed, final run is on tape */
-	TSS_FINALMERGE				/* Performing final merge on-the-fly */
-} TupSortStatus;
-
-/*
  * Parameters for calculation of number of tapes to use --- see inittapes()
  * and tuplesort_merge_order().
  *
@@ -271,6 +257,7 @@ typedef int (*SortTupleComparator) (const SortTuple *a, const SortTuple *b,
 struct Tuplesortstate
 {
 	TupSortStatus status;		/* enumerated value as shown above */
+	TupSortSubStatus	sub_status;	/* Sub status to track when creating and dumping to tape set */
 	int			nKeys;			/* number of columns in sort key */
 	bool		randomAccess;	/* did caller request random access? */
 	bool		bounded;		/* did caller specify a maximum number of
@@ -419,6 +406,20 @@ struct Tuplesortstate
 	int		   *tp_tapenum;		/* Actual tape numbers (TAPE[]) */
 	int			activeTapes;	/* # of active input tapes in merge pass */
 
+	/*
+	 * Tapeset read and write per tape
+	 */
+	int *tp_read;
+	int *tp_write;
+
+	/*
+	 * Total of all tuples written and read
+	 */
+	int tp_read_effective;
+	int tp_write_effective;
+	int tp_read_merge;
+	int tp_write_merge;
+	
 	/*
 	 * These variables are used after completion of sorting to keep track of
 	 * the next tuple to return.  (In the tape case, the tape's current read
@@ -709,6 +710,7 @@ tuplesort_begin_common(int workMem, bool randomAccess)
 #endif
 
 	state->status = TSS_INITIAL;
+	state->sub_status = TSSS_INVALID;
 	state->randomAccess = randomAccess;
 	state->bounded = false;
 	state->tuples = true;
@@ -720,6 +722,12 @@ tuplesort_begin_common(int workMem, bool randomAccess)
 	state->tapeset = NULL;
 
 	state->memtupcount = 0;
+
+	state->tp_read_effective = 0;
+	state->tp_write_effective = 0;
+
+	state->tp_read_merge = 0;
+	state->tp_write_merge = 0;
 
 	/*
 	 * Initial size of array must be more than ALLOCSET_SEPARATE_THRESHOLD;
@@ -1619,12 +1627,15 @@ puttuple_common(Tuplesortstate *state, SortTuple *tuple)
 			/*
 			 * Nope; time to switch to tape-based operation.
 			 */
+			state->sub_status = TSSS_INIT_TAPES;
 			inittapes(state);
 
 			/*
 			 * Dump tuples until we are back under the limit.
 			 */
+			state->sub_status = TSSS_DUMPING_TUPLES;
 			dumptuples(state, false);
+			state->sub_status = TSSS_INVALID;
 			break;
 
 		case TSS_BOUNDED:
@@ -1716,7 +1727,9 @@ puttuple_common(Tuplesortstate *state, SortTuple *tuple)
 			/*
 			 * If we are over the memory limit, dump tuples till we're under.
 			 */
+			state->sub_status = TSSS_DUMPING_TUPLES;
 			dumptuples(state, false);
+			state->sub_status = TSSS_INVALID;
 			break;
 
 		default:
@@ -1788,6 +1801,7 @@ tuplesort_performsort(Tuplesortstate *state)
 			 * We were able to accumulate all the tuples within the allowed
 			 * amount of memory.  Just qsort 'em and we're done.
 			 */
+			state->sub_status = TSSS_SORTING_IN_MEM;
 			tuplesort_sort_memtuples(state);
 			state->current = 0;
 			state->eof_reached = false;
@@ -1803,12 +1817,14 @@ tuplesort_performsort(Tuplesortstate *state)
 			 * in memory, using a heap to eliminate excess tuples.  Now we
 			 * have to transform the heap to a properly-sorted array.
 			 */
+			state->sub_status = TSSS_SORTING_IN_MEM;
 			sort_bounded_heap(state);
 			state->current = 0;
 			state->eof_reached = false;
 			state->markpos_offset = 0;
 			state->markpos_eof = false;
 			state->status = TSS_SORTEDINMEM;
+			state->sub_status = TSSS_INVALID;
 			break;
 
 		case TSS_BUILDRUNS:
@@ -1819,12 +1835,15 @@ tuplesort_performsort(Tuplesortstate *state)
 			 * run (or, if !randomAccess, one run per tape). Note that
 			 * mergeruns sets the correct state->status.
 			 */
+			state->sub_status = TSSS_DUMPING_TUPLES;
 			dumptuples(state, true);
-			mergeruns(state);
+			state->sub_status = TSSS_MERGING_TAPES;
+			mergeruns(state);	// set TSS_SORTEDONTAPE
 			state->eof_reached = false;
 			state->markpos_block = 0L;
 			state->markpos_offset = 0;
 			state->markpos_eof = false;
+			state->sub_status = TSSS_INVALID;	
 			break;
 
 		default:
@@ -1867,11 +1886,15 @@ tuplesort_gettuple_common(Tuplesortstate *state, bool forward,
 		case TSS_SORTEDINMEM:
 			Assert(forward || state->randomAccess);
 			Assert(!state->slabAllocatorUsed);
+
+			state->sub_status = TSSS_FETCHING_FROM_MEM;
+
 			if (forward)
 			{
 				if (state->current < state->memtupcount)
 				{
 					*stup = state->memtuples[state->current++];
+					state->tp_read_effective++;
 					return true;
 				}
 				state->eof_reached = true;
@@ -1904,6 +1927,7 @@ tuplesort_gettuple_common(Tuplesortstate *state, bool forward,
 						return false;
 				}
 				*stup = state->memtuples[state->current - 1];
+				state->tp_read_effective++;
 				return true;
 			}
 			break;
@@ -1911,6 +1935,8 @@ tuplesort_gettuple_common(Tuplesortstate *state, bool forward,
 		case TSS_SORTEDONTAPE:
 			Assert(forward || state->randomAccess);
 			Assert(state->slabAllocatorUsed);
+
+			state->sub_status = TSSS_FETCHING_FROM_TAPES;
 
 			/*
 			 * The slot that held the tuple that we returned in previous
@@ -1930,6 +1956,8 @@ tuplesort_gettuple_common(Tuplesortstate *state, bool forward,
 				if ((tuplen = getlen(state, state->result_tape, true)) != 0)
 				{
 					READTUP(state, stup, state->result_tape, tuplen);
+					state->tp_read[state->result_tape]++;
+					state->tp_read_effective++;
 
 					/*
 					 * Remember the tuple we return, so that we can recycle
@@ -2018,6 +2046,8 @@ tuplesort_gettuple_common(Tuplesortstate *state, bool forward,
 			if (nmoved != tuplen)
 				elog(ERROR, "bogus tuple length in backward scan");
 			READTUP(state, stup, state->result_tape, tuplen);
+			state->tp_read[state->result_tape]++;
+			state->tp_read_effective++;
 
 			/*
 			 * Remember the tuple we return, so that we can recycle its memory
@@ -2031,6 +2061,8 @@ tuplesort_gettuple_common(Tuplesortstate *state, bool forward,
 			Assert(forward);
 			/* We are managing memory ourselves, with the slab allocator. */
 			Assert(state->slabAllocatorUsed);
+
+			state->sub_status = TSSS_FETCHING_FROM_TAPES_WITH_MERGE;
 
 			/*
 			 * The slab slot holding the tuple that we returned in previous
@@ -2051,6 +2083,7 @@ tuplesort_gettuple_common(Tuplesortstate *state, bool forward,
 				SortTuple	newtup;
 
 				*stup = state->memtuples[0];
+				state->tp_read_effective++;
 
 				/*
 				 * Remember the tuple we return, so that we can recycle its
@@ -2412,6 +2445,9 @@ inittapes(Tuplesortstate *state)
 	state->tp_runs = (int *) palloc0(maxTapes * sizeof(int));
 	state->tp_dummy = (int *) palloc0(maxTapes * sizeof(int));
 	state->tp_tapenum = (int *) palloc0(maxTapes * sizeof(int));
+	
+	state->tp_read = (int *) palloc0(maxTapes * sizeof(int));
+	state->tp_write = (int *) palloc0(maxTapes * sizeof(int));
 
 	/*
 	 * Give replacement selection a try based on user setting.  There will be
@@ -2461,7 +2497,10 @@ inittapes(Tuplesortstate *state)
 		state->tp_runs[j] = 0;
 		state->tp_dummy[j] = 1;
 		state->tp_tapenum[j] = j;
+		state->tp_read[j] = 0;
+		state->tp_write[j] = 0;
 	}
+
 	state->tp_fib[state->tapeRange] = 0;
 	state->tp_dummy[state->tapeRange] = 0;
 
@@ -2814,6 +2853,8 @@ mergeonerun(Tuplesortstate *state)
 		/* write the tuple to destTape */
 		srcTape = state->memtuples[0].tupindex;
 		WRITETUP(state, destTape, &state->memtuples[0]);
+		state->tp_write[destTape]++;
+		state->tp_write_merge++;
 
 		/* recycle the slot of the tuple we just wrote out, for the next read */
 		if (state->memtuples[0].tuple)
@@ -2917,6 +2958,8 @@ mergereadnext(Tuplesortstate *state, int srcTape, SortTuple *stup)
 		return false;
 	}
 	READTUP(state, stup, srcTape, tuplen);
+	state->tp_read[srcTape]++;
+	state->tp_read_merge++;
 
 	return true;
 }
@@ -2960,6 +3003,8 @@ dumptuples(Tuplesortstate *state, bool alltuples)
 			Assert(state->memtupcount > 0);
 			WRITETUP(state, state->tp_tapenum[state->destTape],
 					 &state->memtuples[0]);
+			state->tp_write[state->tp_tapenum[state->destTape]]++;
+			state->tp_write_effective++;
 			tuplesort_heap_delete_top(state, true);
 		}
 		else
@@ -3097,6 +3142,8 @@ dumpbatch(Tuplesortstate *state, bool alltuples)
 	{
 		WRITETUP(state, state->tp_tapenum[state->destTape],
 				 &state->memtuples[i]);
+		state->tp_write[state->tp_tapenum[state->destTape]]++;
+		state->tp_write_effective++;
 		state->memtupcount--;
 	}
 
@@ -4447,4 +4494,69 @@ free_sort_tuple(Tuplesortstate *state, SortTuple *stup)
 {
 	FREEMEM(state, GetMemoryChunkSpace(stup->tuple));
 	pfree(stup->tuple);
+}
+
+TupSortStatus tuplesort_status(Tuplesortstate* ts_state)
+{
+	return ts_state->status;
+}
+
+int tuplesort_memtupcount(Tuplesortstate* ts_state)
+{
+	return ts_state->memtupcount;
+}
+
+int tuplesort_memtupsize(Tuplesortstate* ts_state)
+{
+	return ts_state->memtupsize;
+}
+
+int tuplesort_sub_status(Tuplesortstate* ts_state)
+{
+	return ts_state->sub_status;
+}
+
+int tuplesort_get_max_tapes(Tuplesortstate* ts_state)
+{
+	return ts_state->maxTapes;
+}
+
+struct ts_report* tuplesort_get_state(Tuplesortstate* tss)
+{
+	int i;
+	struct ts_report* tsr;
+	
+	tsr = (struct ts_report*) palloc0(sizeof(struct ts_report));
+
+	tsr->status = tss->status;
+	tsr->sub_status = tss->sub_status;
+
+	tsr->memtupcount = tss->memtupcount; 
+	tsr->memtupsize = tss->memtupsize; 
+
+	tsr->maxTapes= tss->maxTapes;
+	tsr->activeTapes = tss->activeTapes;
+	tsr->result_tape = tss->result_tape;
+
+	tsr->tp_fib = (int*) palloc0(tsr->maxTapes * sizeof(int));
+	tsr->tp_runs = (int*) palloc0(tsr->maxTapes * sizeof(int));
+	tsr->tp_dummy = (int*) palloc0(tsr->maxTapes * sizeof(int));
+	tsr->tp_read = (int*) palloc0(tsr->maxTapes * sizeof(int));
+	tsr->tp_write = (int*) palloc0(tsr->maxTapes * sizeof(int));
+
+	tsr->tp_read_effective = tss->tp_read_effective;
+	tsr->tp_write_effective = tss->tp_write_effective;
+
+	tsr->tp_read_merge = tss->tp_read_merge;
+	tsr->tp_write_merge = tss->tp_write_merge;
+
+	for (i = 0; i < tss->maxTapes; i++) {
+		tsr->tp_fib[i] = tss->tp_fib[i];
+		tsr->tp_runs[i] = tss->tp_runs[i];
+		tsr->tp_dummy[i] = tss->tp_dummy[i];
+		tsr->tp_read[i] = tss->tp_read[i];
+		tsr->tp_write[i] = tss->tp_write[i];
+	}
+
+	return tsr;
 }

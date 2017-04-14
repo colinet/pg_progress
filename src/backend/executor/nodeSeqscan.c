@@ -124,9 +124,13 @@ SeqRecheck(SeqScanState *node, TupleTableSlot *slot)
 TupleTableSlot *
 ExecSeqScan(SeqScanState *node)
 {
-	return ExecScan((ScanState *) node,
-					(ExecScanAccessMtd) SeqNext,
-					(ExecScanRecheckMtd) SeqRecheck);
+	TupleTableSlot* hold;
+
+	hold = ExecScan((ScanState *) node,
+			(ExecScanAccessMtd) SeqNext,
+			(ExecScanRecheckMtd) SeqRecheck);
+
+	return hold;
 }
 
 /* ----------------------------------------------------------------
@@ -177,6 +181,12 @@ ExecInitSeqScan(SeqScan *node, EState *estate, int eflags)
 	scanstate = makeNode(SeqScanState);
 	scanstate->ss.ps.plan = (Plan *) node;
 	scanstate->ss.ps.state = estate;
+
+	/*
+	 * Initialize percent done
+	 */
+	//scanstate->ss.ps.percent_done = 0;
+	//scanstate->ss.ps.plan_rows = 0;
 
 	/*
 	 * Miscellaneous initialization

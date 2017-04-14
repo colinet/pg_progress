@@ -22,6 +22,7 @@
 #include "catalog/pg_type.h"
 #include "commands/createas.h"
 #include "commands/prepare.h"
+#include "commands/report.h"
 #include "miscadmin.h"
 #include "nodes/nodeFuncs.h"
 #include "parser/analyze.h"
@@ -628,7 +629,7 @@ DropAllPreparedStatements(void)
  * not the original PREPARE; we get the latter string from the plancache.
  */
 void
-ExplainExecuteQuery(ExecuteStmt *execstmt, IntoClause *into, ExplainState *es,
+ExplainExecuteQuery(ExecuteStmt *execstmt, IntoClause *into, ReportState *es,
 					const char *queryString, ParamListInfo params,
 					QueryEnvironment *queryEnv)
 {
@@ -692,7 +693,7 @@ ExplainExecuteQuery(ExecuteStmt *execstmt, IntoClause *into, ExplainState *es,
 
 		/* Separate plans with an appropriate separator */
 		if (lnext(p) != NULL)
-			ExplainSeparatePlans(es);
+			ReportSeparatePlans(es);
 	}
 
 	if (estate)

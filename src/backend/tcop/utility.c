@@ -67,6 +67,7 @@
 #include "utils/acl.h"
 #include "utils/guc.h"
 #include "utils/syscache.h"
+#include "executor/progress.h"
 
 
 /* Hook for plugins to get control in ProcessUtility() */
@@ -679,6 +680,10 @@ standard_ProcessUtility(PlannedStmt *pstmt,
 		case T_ExplainStmt:
 			ExplainQuery(pstate, (ExplainStmt *) parsetree, queryString, params,
 						 queryEnv, dest);
+			break;
+
+		case T_ProgressStmt:
+			ProgressSendRequest(pstate, (ProgressStmt*) parsetree, dest);
 			break;
 
 		case T_AlterSystemStmt:
@@ -2505,6 +2510,10 @@ CreateCommandTag(Node *parsetree)
 			tag = "EXPLAIN";
 			break;
 
+		case T_ProgressStmt:
+			tag = "PROGRESS";
+			break;
+
 		case T_CreateTableAsStmt:
 			switch (((CreateTableAsStmt *) parsetree)->relkind)
 			{
@@ -2846,6 +2855,7 @@ CreateCommandTag(Node *parsetree)
 		default:
 			elog(WARNING, "unrecognized node type: %d",
 				 (int) nodeTag(parsetree));
+			elog(WARNING, "here");
 			tag = "???";
 			break;
 	}

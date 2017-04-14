@@ -17,7 +17,8 @@ OBJS = amcmds.o aggregatecmds.o alter.o analyze.o async.o cluster.o comment.o \
 	dbcommands.o define.o discard.o dropcmds.o \
 	event_trigger.o explain.o extension.o foreigncmds.o functioncmds.o \
 	indexcmds.o lockcmds.o matview.o operatorcmds.o opclasscmds.o \
-	policy.o portalcmds.o prepare.o proclang.o publicationcmds.o \
+	policy.o portalcmds.o prepare.o progress.o proclang.o publicationcmds.o \
+	report.o \
 	schemacmds.o seclabel.o sequence.o statscmds.o subscriptioncmds.o \
 	tablecmds.o tablespace.o trigger.o tsearchcmds.o typecmds.o user.o \
 	vacuum.o vacuumlazy.o variable.o view.o

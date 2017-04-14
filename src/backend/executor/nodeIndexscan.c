@@ -90,6 +90,7 @@ IndexNext(IndexScanState *node)
 	 */
 	estate = node->ss.ps.state;
 	direction = estate->es_direction;
+
 	/* flip direction if this is an overall backward scan */
 	if (ScanDirectionIsBackward(((IndexScan *) node->ss.ps.plan)->indexorderdir))
 	{
@@ -538,6 +539,8 @@ reorderqueue_pop(IndexScanState *node)
 TupleTableSlot *
 ExecIndexScan(IndexScanState *node)
 {
+	TupleTableSlot *hold;
+
 	/*
 	 * If we have runtime keys and they've not already been set up, do it now.
 	 */
@@ -545,13 +548,15 @@ ExecIndexScan(IndexScanState *node)
 		ExecReScan((PlanState *) node);
 
 	if (node->iss_NumOrderByKeys > 0)
-		return ExecScan(&node->ss,
+		hold = ExecScan(&node->ss,
 						(ExecScanAccessMtd) IndexNextWithReorder,
 						(ExecScanRecheckMtd) IndexRecheck);
 	else
-		return ExecScan(&node->ss,
+		hold = ExecScan(&node->ss,
 						(ExecScanAccessMtd) IndexNext,
 						(ExecScanRecheckMtd) IndexRecheck);
+
+	return hold;
 }
 
 /* ----------------------------------------------------------------
@@ -903,6 +908,12 @@ ExecInitIndexScan(IndexScan *node, EState *estate, int eflags)
 	indexstate = makeNode(IndexScanState);
 	indexstate->ss.ps.plan = (Plan *) node;
 	indexstate->ss.ps.state = estate;
+
+	/*
+	 * Initialize percent done
+	 */
+	//indexstate->ss.ps.percent_done = 0;
+	//indexstate->ss.ps.plan_rows = 0;
 
 	/*
 	 * Miscellaneous initialization

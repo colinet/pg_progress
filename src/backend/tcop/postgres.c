@@ -42,6 +42,7 @@
 #include "catalog/pg_type.h"
 #include "commands/async.h"
 #include "commands/prepare.h"
+#include "executor/progress.h"
 #include "libpq/libpq.h"
 #include "libpq/pqformat.h"
 #include "libpq/pqsignal.h"
@@ -2999,6 +3000,9 @@ ProcessInterrupts(void)
 
 	if (ParallelMessagePending)
 		HandleParallelMessages();
+
+	if (progress_requested)
+		HandleProgressRequest();
 }
 
 
@@ -3792,6 +3796,12 @@ PostgresMain(int argc, char *argv[],
 	 */
 	if (!IsUnderPostmaster)
 		PgStartTime = GetCurrentTimestamp();
+
+	/* Init Progress reporting */
+	if (IsUnderPostmaster) {
+		ProgressBackendInit();
+		on_proc_exit(ProgressBackendExit, 0);
+	}
 
 	/*
 	 * POSTGRES main processing loop begins here

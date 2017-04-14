@@ -15,6 +15,7 @@
 #include <limits.h>
 
 #include "commands/explain.h"
+#include "commands/report.h"
 #include "executor/instrument.h"
 #include "utils/guc.h"
 
@@ -320,7 +321,7 @@ explain_ExecutorEnd(QueryDesc *queryDesc)
 		msec = queryDesc->totaltime->total * 1000.0;
 		if (msec >= auto_explain_log_min_duration)
 		{
-			ExplainState *es = NewExplainState();
+			ReportState *es = NewReportState();
 
 			es->analyze = (queryDesc->instrument_options && auto_explain_log_analyze);
 			es->verbose = auto_explain_log_verbose;
@@ -330,7 +331,7 @@ explain_ExecutorEnd(QueryDesc *queryDesc)
 			es->format = auto_explain_log_format;
 
 			ExplainBeginOutput(es);
-			ExplainQueryText(es, queryDesc);
+			ReportQueryText(es, queryDesc);
 			ExplainPrintPlan(es, queryDesc);
 			if (es->analyze && auto_explain_log_triggers)
 				ExplainPrintTriggers(es, queryDesc);

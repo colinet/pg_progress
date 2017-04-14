@@ -172,6 +172,9 @@ static inline void ProcArrayEndTransactionInternal(PGPROC *proc,
 								PGXACT *pgxact, TransactionId latestXid);
 static void ProcArrayGroupClearXid(PGPROC *proc, TransactionId latestXid);
 
+/* Debugging primitive */
+static void dump_procs(void);
+
 /*
  * Report shared-memory space needed by CreateSharedProcArray.
  */
@@ -1255,6 +1258,60 @@ TransactionIdIsActive(TransactionId xid)
 	return result;
 }
 
+
+/*
+ *  Convert process id to backend id.
+ *  Needed for cmds/progress.c
+ */
+BackendId ProcPidGetBackendId(int pid)
+{
+	ProcArrayStruct *arrayP = procArray;
+        BackendId bid = InvalidBackendId;
+        int i;
+
+	//dump_procs();
+	
+        LWLockAcquire(ProcArrayLock, LW_SHARED);
+
+        for (i = 0; i < arrayP->numProcs; i++) {
+		int pgprocno;
+                volatile PGPROC* proc;
+
+		pgprocno = arrayP->pgprocnos[i];
+		proc = &allProcs[pgprocno];
+                if (proc->pid == pid) {
+                        bid = proc->backendId;
+                        break;
+                }
+        }
+
+        LWLockRelease(ProcArrayLock);
+
+        return bid;
+}
+
+static void dump_procs(void)
+{
+	ProcArrayStruct *arrayP = procArray;
+	int i;
+
+	LWLockAcquire(ProcArrayLock, LW_SHARED);
+	
+
+        for (i = 0; i < arrayP->numProcs; i++) {
+		int pgprocno;
+                volatile PGPROC* proc;
+
+		pgprocno = arrayP->pgprocnos[i];
+		proc = &allProcs[pgprocno];
+		elog(LOG, "pgprocno = %d, proc->pid = %d, proc->backendId = %d\n", 
+			pgprocno,
+			proc->pid,
+			proc->backendId);
+	}
+
+        LWLockRelease(ProcArrayLock);
+}
 
 /*
  * GetOldestXmin -- returns oldest transaction that was running

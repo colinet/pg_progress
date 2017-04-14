@@ -232,6 +232,8 @@ initscan(HeapScanDesc scan, ScanKey key, bool keep_startblock)
 	else
 		scan->rs_nblocks = RelationGetNumberOfBlocks(scan->rs_rd);
 
+	//elog(LOG, "rs_nblocks (%p)=%u", scan, scan->rs_nblocks);
+
 	/*
 	 * If the table is large relative to NBuffers, use a bulk-read access
 	 * strategy and enable synchronized scanning (see syncscan.c).  Although

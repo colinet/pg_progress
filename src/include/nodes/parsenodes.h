@@ -3085,6 +3085,17 @@ typedef struct ExplainStmt
 } ExplainStmt;
 
 /* ----------------------
+ * 		PROGRESS Statement
+ * ----------------------
+ */
+typedef struct ProgressStmt {
+	NodeTag type;
+
+	int pid;			/* pid of the monitored process */
+	List* options;			/* format output option */
+} ProgressStmt;
+
+/* ----------------------
  *		CREATE TABLE AS Statement (a/k/a SELECT INTO)
  *
  * A query written as CREATE TABLE AS will produce this node type natively.

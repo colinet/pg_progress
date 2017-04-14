@@ -99,9 +99,13 @@ SampleRecheck(SampleScanState *node, TupleTableSlot *slot)
 TupleTableSlot *
 ExecSampleScan(SampleScanState *node)
 {
-	return ExecScan((ScanState *) node,
+	TupleTableSlot* hold;
+
+	hold =  ExecScan((ScanState *) node,
 					(ExecScanAccessMtd) SampleNext,
 					(ExecScanRecheckMtd) SampleRecheck);
+
+	return hold;
 }
 
 /* ----------------------------------------------------------------
@@ -153,6 +157,12 @@ ExecInitSampleScan(SampleScan *node, EState *estate, int eflags)
 	scanstate = makeNode(SampleScanState);
 	scanstate->ss.ps.plan = (Plan *) node;
 	scanstate->ss.ps.state = estate;
+
+	/*
+	 * Initialize progress report 
+	 */
+	//scanstate->ss.ps.percent_done = 0;
+	//scanstate->ss.ps.plan_rows = 0;
 
 	/*
 	 * Miscellaneous initialization

@@ -19,6 +19,7 @@
 #include "catalog/pg_class.h"
 #include "commands/defrem.h"
 #include "commands/explain.h"
+#include "commands/report.h"
 #include "commands/vacuum.h"
 #include "foreign/fdwapi.h"
 #include "funcapi.h"
@@ -323,14 +324,14 @@ static void postgresBeginDirectModify(ForeignScanState *node, int eflags);
 static TupleTableSlot *postgresIterateDirectModify(ForeignScanState *node);
 static void postgresEndDirectModify(ForeignScanState *node);
 static void postgresExplainForeignScan(ForeignScanState *node,
-						   ExplainState *es);
+						   ReportState *es);
 static void postgresExplainForeignModify(ModifyTableState *mtstate,
 							 ResultRelInfo *rinfo,
 							 List *fdw_private,
 							 int subplan_index,
-							 ExplainState *es);
+							 ReportState *es);
 static void postgresExplainDirectModify(ForeignScanState *node,
-							ExplainState *es);
+							ReportState *es);
 static bool postgresAnalyzeForeignTable(Relation relation,
 							AcquireSampleRowsFunc *func,
 							BlockNumber *totalpages);
@@ -2431,7 +2432,7 @@ postgresEndDirectModify(ForeignScanState *node)
  *		Produce extra output for EXPLAIN of a ForeignScan on a foreign table
  */
 static void
-postgresExplainForeignScan(ForeignScanState *node, ExplainState *es)
+postgresExplainForeignScan(ForeignScanState *node, ReportState *es)
 {
 	List	   *fdw_private;
 	char	   *sql;
@@ -2468,7 +2469,7 @@ postgresExplainForeignModify(ModifyTableState *mtstate,
 							 ResultRelInfo *rinfo,
 							 List *fdw_private,
 							 int subplan_index,
-							 ExplainState *es)
+							 ReportState *es)
 {
 	if (es->verbose)
 	{
@@ -2485,7 +2486,7 @@ postgresExplainForeignModify(ModifyTableState *mtstate,
  *		foreign table directly
  */
 static void
-postgresExplainDirectModify(ForeignScanState *node, ExplainState *es)
+postgresExplainDirectModify(ForeignScanState *node, ReportState *es)
 {
 	List	   *fdw_private;
 	char	   *sql;

@@ -193,6 +193,25 @@ bms_make_singleton(int x)
 }
 
 /*
+ * bms_prealloc - pre allocate space for a bitmapset
+ */
+Bitmapset *
+bms_prealloc(int x)
+{
+	Bitmapset  *result;
+	int wordnum;
+
+	if (x < 0)
+		elog(ERROR, "negative bitmapset member not allowed");
+		
+	wordnum = WORDNUM(x);	
+	result = (Bitmapset *) palloc0(BITMAPSET_SIZE(wordnum + 1));
+	result->nwords = wordnum + 1;
+
+	return result;
+}
+
+/*
  * bms_free - free a bitmapset
  *
  * Same as pfree except for allowing NULL input

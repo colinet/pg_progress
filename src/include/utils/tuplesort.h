@@ -25,6 +25,32 @@
 #include "fmgr.h"
 #include "utils/relcache.h"
 
+/*
+ * Possible states of a Tuplesort object.  These denote the states that
+ * persist between calls of Tuplesort routines.
+ */
+typedef enum
+{
+	TSS_INITIAL,                            /* Loading tuples; still within memory limit */
+	TSS_BOUNDED,                            /* Loading tuples into bounded-size heap */
+	TSS_BUILDRUNS,                          /* Loading tuples; writing to tape */
+	TSS_SORTEDINMEM,                        /* Sort completed entirely in memory */
+	TSS_SORTEDONTAPE,                       /* Sort completed, final run is on tape */
+	TSS_FINALMERGE                          /* Performing final merge on-the-fly */
+} TupSortStatus;
+
+typedef enum
+{
+	TSSS_INVALID,				/* Invalid sub status */
+	TSSS_INIT_TAPES,			/* Creating tapes */
+	TSSS_DUMPING_TUPLES,			/* dumping tuples from mem to tapes */
+	TSSS_SORTING_IN_MEM,
+	TSSS_SORTING_ON_TAPES,
+	TSSS_MERGING_TAPES,
+	TSSS_FETCHING_FROM_MEM,
+	TSSS_FETCHING_FROM_TAPES,
+	TSSS_FETCHING_FROM_TAPES_WITH_MERGE	
+} TupSortSubStatus;
 
 /* Tuplesortstate is an opaque type whose details are not known outside
  * tuplesort.c.
@@ -32,9 +58,45 @@
 typedef struct Tuplesortstate Tuplesortstate;
 
 /*
+ * Used to fetch state of Tuplesortstate
+ */
+struct ts_report {
+	TupSortStatus status;
+	TupSortSubStatus sub_status; 
+
+	int memtupcount;
+	Size memtupsize;
+
+	int maxTapes;
+
+
+	int* tp_fib;
+	int* tp_runs;
+	int* tp_dummy;
+	int* tp_tapenum;
+	int activeTapes;
+	int result_tape;
+
+	int* tp_read;
+	int* tp_write;
+
+	/*
+	 * Effective rows in/out from sort
+	 */
+	int tp_read_effective;
+	int tp_write_effective;
+
+	/*
+	 * Rows in/out needed to perform sort
+	 */
+	int tp_read_merge;
+	int tp_write_merge;
+};
+
+/*
  * We provide multiple interfaces to what is essentially the same code,
  * since different callers have different data to be sorted and want to
- * specify the sort key information differently.  There are two APIs for
+ * specify the sortkey information differently.  There are two APIs for
  * sorting HeapTuples and two more for sorting IndexTuples.  Yet another
  * API supports sorting bare Datums.
  *
@@ -122,5 +184,12 @@ extern int	tuplesort_merge_order(int64 allowedMem);
 extern void tuplesort_rescan(Tuplesortstate *state);
 extern void tuplesort_markpos(Tuplesortstate *state);
 extern void tuplesort_restorepos(Tuplesortstate *state);
+
+extern TupSortStatus tuplesort_status(Tuplesortstate* state);
+extern int tuplesort_memtupcount(Tuplesortstate* state);
+extern int tuplesort_memtupsize(Tuplesortstate* state);
+extern int tuplesort_sub_status(Tuplesortstate* state);
+extern int tuplesort_get_max_tapes(Tuplesortstate* state);
+extern struct ts_report* tuplesort_get_state(Tuplesortstate* tss);
 
 #endif   /* TUPLESORT_H */

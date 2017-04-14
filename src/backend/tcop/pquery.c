@@ -26,6 +26,7 @@
 #include "tcop/utility.h"
 #include "utils/memutils.h"
 #include "utils/snapmgr.h"
+#include "executor/progress.h"
 
 
 /*
@@ -96,6 +97,10 @@ CreateQueryDesc(PlannedStmt *plannedstmt,
 	/* not yet executed */
 	qd->already_executed = false;
 
+	/* Track the QueryDesc from global variables */
+	MyQueryDesc = qd;
+	IsQueryDescValid = true;
+
 	return qd;
 }
 
@@ -114,6 +119,9 @@ FreeQueryDesc(QueryDesc *qdesc)
 
 	/* Only the QueryDesc itself need be freed */
 	pfree(qdesc);
+
+	MyQueryDesc = NULL;
+	IsQueryDescValid = false;
 }
 
 
@@ -150,6 +158,13 @@ ProcessQuery(PlannedStmt *plan,
 	queryDesc = CreateQueryDesc(plan, sourceText,
 								GetActiveSnapshot(), InvalidSnapshot,
 								dest, params, queryEnv, 0);
+
+	/*
+	 * Create the Progress String buffer used to report progress
+	 * Space needs to be allocated now because such buffer will be used under 
+	 * signal context when memory allocation is not possible.
+	 */
+	//progress_state = CreateProgressState();
 
 	/*
 	 * Call ExecutorStart to prepare the plan for execution
@@ -207,6 +222,7 @@ ProcessQuery(PlannedStmt *plan,
 	ExecutorEnd(queryDesc);
 
 	FreeQueryDesc(queryDesc);
+	//FreeProgressState(progress_state);
 }
 
 /*
@@ -504,6 +520,15 @@ PortalStart(Portal portal, ParamListInfo params,
 											params,
 											portal->queryEnv,
 											0);
+
+				/*
+				 * Create the Progress String buffer used to report progress
+				 * Space needs to be allocated now because such buffer will be used under
+				 * signal context when memory allocation is not possible.
+				 */
+				//progress_state = CreateProgressState();
+				//if (progress_state == NULL)
+				//	elog(LOG, "ERROR: progress_state is NULL");
 
 				/*
 				 * If it's a scrollable cursor, executor needs to support

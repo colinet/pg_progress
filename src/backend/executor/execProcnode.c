@@ -365,6 +365,12 @@ ExecInitNode(Plan *node, EState *estate, int eflags)
 	}
 
 	/*
+	 * Initialize percent done
+	 */
+        result->percent_done = 0;
+        result->plan_rows = 0;
+
+	/*
 	 * Initialize any initPlans present in this node.  The planner put them in
 	 * a separate list for us.
 	 */
@@ -398,6 +404,9 @@ TupleTableSlot *
 ExecProcNode(PlanState *node)
 {
 	TupleTableSlot *result;
+	double computed_rows;
+        double total_rows;
+        unsigned short new_progress;    /* % of progression for next percent */
 
 	CHECK_FOR_INTERRUPTS();
 
@@ -576,6 +585,22 @@ ExecProcNode(PlanState *node)
 			result = NULL;
 			break;
 	}
+
+	/*
+	 * Progress Query 
+	 */
+	node->plan_rows++;
+        computed_rows = node->plan_rows;
+        total_rows = node->plan->plan_rows;
+	if (total_rows != 0)
+        	new_progress = (100 * computed_rows) / total_rows; 
+	else 
+		new_progress = 0;
+
+        if (new_progress > node->percent_done) {
+                elog(DEBUG5, "ExecProcNode %d%%\n", (unsigned short) new_progress);
+                        node->percent_done = new_progress;
+        }
 
 	if (node->instrument)
 		InstrStopNode(node->instrument, TupIsNull(result) ? 0.0 : 1.0);
@@ -839,6 +864,12 @@ ExecEndNode(PlanState *node)
 			elog(ERROR, "unrecognized node type: %d", (int) nodeTag(node));
 			break;
 	}
+
+	/*
+	 * Re initialize percent done
+	 */
+        node->percent_done = 0;
+        node->plan_rows = 0;
 }
 
 /*

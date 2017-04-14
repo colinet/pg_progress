@@ -66,6 +66,7 @@ IndexOnlyNext(IndexOnlyScanState *node)
 	 */
 	estate = node->ss.ps.state;
 	direction = estate->es_direction;
+
 	/* flip direction if this is an overall backward scan */
 	if (ScanDirectionIsBackward(((IndexOnlyScan *) node->ss.ps.plan)->indexorderdir))
 	{
@@ -306,15 +307,19 @@ IndexOnlyRecheck(IndexOnlyScanState *node, TupleTableSlot *slot)
 TupleTableSlot *
 ExecIndexOnlyScan(IndexOnlyScanState *node)
 {
+	TupleTableSlot *hold;
+
 	/*
 	 * If we have runtime keys and they've not already been set up, do it now.
 	 */
 	if (node->ioss_NumRuntimeKeys != 0 && !node->ioss_RuntimeKeysReady)
 		ExecReScan((PlanState *) node);
 
-	return ExecScan(&node->ss,
+	hold = ExecScan(&node->ss,
 					(ExecScanAccessMtd) IndexOnlyNext,
 					(ExecScanRecheckMtd) IndexOnlyRecheck);
+
+	return hold;
 }
 
 /* ----------------------------------------------------------------
@@ -474,6 +479,12 @@ ExecInitIndexOnlyScan(IndexOnlyScan *node, EState *estate, int eflags)
 	indexstate->ss.ps.plan = (Plan *) node;
 	indexstate->ss.ps.state = estate;
 	indexstate->ioss_HeapFetches = 0;
+
+	/*
+	 * Initialize percent done
+	 */
+	//indexstate->ss.ps.percent_done = 0;
+	//indexstate->ss.ps.plan_rows = 0;
 
 	/*
 	 * Miscellaneous initialization

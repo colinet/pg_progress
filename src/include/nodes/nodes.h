@@ -340,6 +340,7 @@ typedef enum NodeTag
 	T_DropdbStmt,
 	T_VacuumStmt,
 	T_ExplainStmt,
+	T_ProgressStmt,
 	T_CreateTableAsStmt,
 	T_CreateSeqStmt,
 	T_AlterSeqStmt,
@@ -626,6 +627,13 @@ extern void *copyObjectImpl(const void *obj);
  */
 extern bool equal(const void *a, const void *b);
 
+/*
+ * plan nodes functions
+ */
+struct PlanInfo;
+struct Plan;
+
+extern int planNodeInfo(struct Plan* plan, struct PlanInfo* info);
 
 /*
  * Typedefs for identifying qualifier selectivities and plan costs as such.

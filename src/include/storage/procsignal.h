@@ -41,6 +41,9 @@ typedef enum
 	PROCSIG_RECOVERY_CONFLICT_BUFFERPIN,
 	PROCSIG_RECOVERY_CONFLICT_STARTUP_DEADLOCK,
 
+	/* progress monitoring */
+	PROCSIG_PROGRESS,
+
 	NUM_PROCSIGNALS				/* Must be last! */
 } ProcSignalReason;
 

@@ -4238,3 +4238,248 @@ bmsToString(const Bitmapset *bms)
 	outBitmapset(&str, bms);
 	return str.data;
 }
+
+/*
+ * nodeName - 
+ *	  extract node name from node pointer
+ */
+int
+planNodeInfo(struct Plan* plan, struct PlanInfo* info)
+{
+	const char *pname;
+	const char *sname;
+	const char *operation;
+	const char *partialmode;
+	const char *strategy;
+	const char * custom_name;
+	int ret;
+
+	ret = 0;
+
+	switch (nodeTag(plan))
+	{
+		case T_Result:
+			pname = sname = "Result";
+			break;
+		case T_ProjectSet:
+			pname = sname = "ProjectSet";
+			break;
+		case T_ModifyTable:
+			sname = "ModifyTable";
+			switch (((ModifyTable *) plan)->operation)
+			{
+				case CMD_INSERT:
+					pname = operation = "Insert";
+					break;
+				case CMD_UPDATE:
+					pname = operation = "Update";
+					break;
+				case CMD_DELETE:
+					pname = operation = "Delete";
+					break;
+				default:
+					pname = "???";
+					ret = -1;
+					break;
+			}
+			break;
+		case T_Append:
+			pname = sname = "Append";
+			break;
+		case T_MergeAppend:
+			pname = sname = "Merge Append";
+			break;
+		case T_RecursiveUnion:
+			pname = sname = "Recursive Union";
+			break;
+		case T_BitmapAnd:
+			pname = sname = "BitmapAnd";
+			break;
+		case T_BitmapOr:
+			pname = sname = "BitmapOr";
+			break;
+		case T_NestLoop:
+			pname = sname = "Nested Loop";
+			break;
+		case T_MergeJoin:
+			pname = "Merge";	/* "Join" gets added by jointype switch */
+			sname = "Merge Join";
+			break;
+		case T_HashJoin:
+			pname = "Hash";		/* "Join" gets added by jointype switch */
+			sname = "Hash Join";
+			break;
+		case T_SeqScan:
+			pname = sname = "Seq Scan";
+			break;
+		case T_SampleScan:
+			pname = sname = "Sample Scan";
+			break;
+		case T_Gather:
+			pname = sname = "Gather";
+			break;
+		case T_GatherMerge:
+			pname = sname = "Gather Merge";
+			break;
+		case T_IndexScan:
+			pname = sname = "Index Scan";
+			break;
+		case T_IndexOnlyScan:
+			pname = sname = "Index Only Scan";
+			break;
+		case T_BitmapIndexScan:
+			pname = sname = "Bitmap Index Scan";
+			break;
+		case T_BitmapHeapScan:
+			pname = sname = "Bitmap Heap Scan";
+			break;
+		case T_TidScan:
+			pname = sname = "Tid Scan";
+			break;
+		case T_SubqueryScan:
+			pname = sname = "Subquery Scan";
+			break;
+		case T_FunctionScan:
+			pname = sname = "Function Scan";
+			break;
+		case T_ValuesScan:
+			pname = sname = "Values Scan";
+			break;
+		case T_CteScan:
+			pname = sname = "CTE Scan";
+			break;
+		case T_WorkTableScan:
+			pname = sname = "WorkTable Scan";
+			break;
+		case T_ForeignScan:
+			sname = "Foreign Scan";
+			switch (((ForeignScan *) plan)->operation)
+			{
+				case CMD_SELECT:
+					pname = "Foreign Scan";
+					operation = "Select";
+					break;
+				case CMD_INSERT:
+					pname = "Foreign Insert";
+					operation = "Insert";
+					break;
+				case CMD_UPDATE:
+					pname = "Foreign Update";
+					operation = "Update";
+					break;
+				case CMD_DELETE:
+					pname = "Foreign Delete";
+					operation = "Delete";
+					break;
+				default:
+					pname = "???";
+					ret = -1;
+					break;
+			}
+			break;
+		case T_CustomScan:
+			sname = "Custom Scan";
+			custom_name = ((CustomScan *) plan)->methods->CustomName;
+			if (custom_name)
+				pname = psprintf("Custom Scan (%s)", custom_name);
+			else
+				pname = sname;
+			break;
+		case T_Material:
+			pname = sname = "Materialize";
+			break;
+		case T_Sort:
+			pname = sname = "Sort";
+			break;
+		case T_Group:
+			pname = sname = "Group";
+			break;
+		case T_Agg:
+			{
+				Agg		   *agg = (Agg *) plan;
+
+				sname = "Aggregate";
+				switch (agg->aggstrategy)
+				{
+					case AGG_PLAIN:
+						pname = "Aggregate";
+						strategy = "Plain";
+						break;
+					case AGG_SORTED:
+						pname = "GroupAggregate";
+						strategy = "Sorted";
+						break;
+					case AGG_HASHED:
+						pname = "HashAggregate";
+						strategy = "Hashed";
+						break;
+					default:
+						pname = "Aggregate ???";
+						strategy = "???";
+						ret = -1;
+						break;
+				}
+
+				if (DO_AGGSPLIT_SKIPFINAL(agg->aggsplit))
+				{
+					partialmode = "Partial";
+					pname = psprintf("%s %s", partialmode, pname);
+				}
+				else if (DO_AGGSPLIT_COMBINE(agg->aggsplit))
+				{
+					partialmode = "Finalize";
+					pname = psprintf("%s %s", partialmode, pname);
+				}
+				else
+					partialmode = "Simple";
+			}
+			break;
+		case T_WindowAgg:
+			pname = sname = "WindowAgg";
+			break;
+		case T_Unique:
+			pname = sname = "Unique";
+			break;
+		case T_SetOp:
+			sname = "SetOp";
+			switch (((SetOp *) plan)->strategy)
+			{
+				case SETOP_SORTED:
+					pname = "SetOp";
+					strategy = "Sorted";
+					break;
+				case SETOP_HASHED:
+					pname = "HashSetOp";
+					strategy = "Hashed";
+					break;
+				default:
+					pname = "SetOp ???";
+					strategy = "???";
+					ret = -1;
+					break;
+			}
+			break;
+		case T_LockRows:
+			pname = sname = "LockRows";
+			break;
+		case T_Limit:
+			pname = sname = "Limit";
+			break;
+		case T_Hash:
+			pname = sname = "Hash";
+			break;
+		default:
+			pname = sname = "???";
+			elog(LOG, "HERE ???: %d", nodeTag(plan));
+			ret = -1;
+			break;
+	}
+
+	info->pname = pname;
+	info->sname = sname;
+	info->operation = operation;
+	info->partialmode = partialmode;
+	info->strategy = strategy;
+
+	return ret;
+}

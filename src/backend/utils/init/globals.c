@@ -22,6 +22,8 @@
 #include "libpq/pqcomm.h"
 #include "miscadmin.h"
 #include "storage/backendid.h"
+#include "executor/execdesc.h"
+#include "executor/progress.h"
 
 
 ProtocolVersion FrontendProtocol;
@@ -86,6 +88,13 @@ char	   *DatabasePath = NULL;
 pid_t		PostmasterPid = 0;
 
 /*
+ * Global QueryDesc pointer.
+ * This is needed from signal context to locate the QueryDesc we are in
+ */
+QueryDesc* MyQueryDesc;
+bool IsQueryDescValid = false;
+
+/*
  * IsPostmasterEnvironment is true in a postmaster process and any postmaster
  * child process; it is false in a standalone process (bootstrap or
  * standalone backend).  IsUnderPostmaster is true in postmaster child
@@ -137,3 +146,6 @@ int			VacuumPageDirty = 0;
 
 int			VacuumCostBalance = 0;		/* working state for vacuum */
 bool		VacuumCostActive = false;
+
+StringInfo	progress_str;
+ReportState*	progress_state;

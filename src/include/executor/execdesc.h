@@ -67,4 +67,6 @@ extern QueryDesc *CreateQueryDesc(PlannedStmt *plannedstmt,
 
 extern void FreeQueryDesc(QueryDesc *qdesc);
 
+extern PGDLLIMPORT QueryDesc* MyQueryDesc;
+extern PGDLLIMPORT bool IsQueryDescValid;
 #endif   /* EXECDESC_H  */

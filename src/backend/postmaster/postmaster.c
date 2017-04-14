@@ -121,6 +121,7 @@
 #include "storage/pmsignal.h"
 #include "storage/proc.h"
 #include "tcop/tcopprot.h"
+#include "executor/progress.h"
 #include "utils/builtins.h"
 #include "utils/datetime.h"
 #include "utils/dynamic_loader.h"
