@@ -1157,9 +1157,8 @@ void ProgressTupleStore(Tuplestorestate* tss, ReportState* ps)
 			appendStringInfo(ps->str, " read");
 
 		appendStringInfo(ps->str, " readptrcount=%d", tssr.readptrcount);
-		appendStringInfo(ps->str, " tuples (");
-		appendStringInfo(ps->str, "write=%ld", (long int ) tssr.tuples_count);
-		if (tssr.tuples_skipped > 0) {
+		appendStringInfo(ps->str, " rows (write=%ld", (long int ) tssr.tuples_count);
+		if (tssr.tuples_skipped) {
 			appendStringInfo(ps->str, " skipped=%ld", (long int) tssr.tuples_skipped);
 		}
 
