@@ -46,8 +46,20 @@
 #include "miscadmin.h"
 #include "pgstat.h"
 
-static int log_stmt = 0;	/* log query monitored */
+static int log_stmt = 0;		/* log query monitored */
 static int debug = 0;
+
+/* 
+ * Monitoring progress waits 5secs for monitored backend response.
+ *
+ * If this timeout is too short, it may not leave enough time for monotored backend to dump its
+ * progression about the SQL query it is running.
+ *
+ * If this timeout is too long, a cancelled SQL query in a backend could block the monitoring
+ * backend too for a longi time.
+ */
+unsigned short PROGRESS_TIMEOUT = 5;
+
 
 /*
  * One ProgressCtl is allocated for each backend process which is to be potentially monitored
@@ -220,6 +232,7 @@ void ProgressSendRequest(
 	char* buf;
 	MemoryContext local_context;
 	MemoryContext old_context;
+	char* backend_timeout = "<backend timeout>";
 
 	/* Convert pid to backend_id */
 	bid = ProcPidGetBackendId(stmt->pid);
@@ -253,11 +266,17 @@ void ProgressSendRequest(
 	ResetLatch(req->latch);
 
 	SendProcSignal(stmt->pid, PROCSIG_PROGRESS, bid);
-	WaitLatch(req->latch, WL_LATCH_SET, 0, WAIT_EVENT_PROGRESS);
+	WaitLatch(req->latch, WL_LATCH_SET | WL_TIMEOUT , PROGRESS_TIMEOUT * 1000L, WAIT_EVENT_PROGRESS);
 	DisownLatch(req->latch);
 
 	/* Fetch result and clear SHM buffer */
-	memcpy(buf, req->buf, strlen(req->buf));
+	if (strlen(req->buf) == 0) {
+		/* We have timed out on PROGRESS_TIMEOUT */
+		memcpy(buf, backend_timeout, strlen(backend_timeout));
+	} else {
+		/* We have a result computed by the monitored backend */
+		memcpy(buf, req->buf, strlen(req->buf));
+	}
 	memset(req->buf, 0, PROGRESS_AREA_SIZE);
 
 	/* End serialization */
@@ -360,7 +379,17 @@ void HandleProgressRequest(void)
 	MemoryContext progress_context;
 	char* shmBufferTooShort = "shm buffer is too small";
 
-	//HOLD_INTERRUPTS();
+	/*
+	 * We hold interrupt here because the current SQL query could be cancelled at any time. In which 
+	 * case, the current backend would not call SetLatch(). Monitoring backend would wait endlessly.
+	 *
+	 * To avoid such situation, a further safety measure has been added: the monitoring backend waits
+	 * the response for a maximum of PROGRESS_TIMEOUT time. After this timeout has expired, the monitoring
+	 * backend sends back the respponse which is empty.
+	 *
+	 * The current backend could indeed be interrupted before the HOLD_INTERRUPTS() is reached.
+	 */
+	HOLD_INTERRUPTS();
 
 	progress_context =  AllocSetContextCreate(CurrentMemoryContext, "ReportState", ALLOCSET_DEFAULT_SIZES);
 	oldcontext = MemoryContextSwitchTo(progress_context);
@@ -424,8 +453,7 @@ out:
 	MemoryContextDelete(ps->memcontext);
 	
 	SetLatch(req->latch);		// Notify of progress state delivery
-
-	//RESUME_INTERRUPTS();
+	RESUME_INTERRUPTS();
 }
 
 static void ProgressPlan(
