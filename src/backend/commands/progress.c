@@ -452,7 +452,8 @@ void HandleProgressRequest(void)
 out:
 	/* Dump in SHM the string buffer content */
 	if (strlen(ps->str->data) < PROGRESS_AREA_SIZE) {
-		memcpy(req->buf, ps->str->data, strlen(ps->str->data)); 
+		/* Mind the '\0' char at the end of the string */
+		memcpy(req->buf, ps->str->data, strlen(ps->str->data) + 1); 
 	} else {
 		memcpy(req->buf, shmBufferTooShort, strlen(shmBufferTooShort));
 		elog(LOG, "Needed size for buffer %d", (int) strlen(ps->str->data));
