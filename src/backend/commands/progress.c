@@ -1399,7 +1399,7 @@ void ReportTime(QueryDesc* query, ReportState* ps)
 	INSTR_TIME_SET_CURRENT(currenttime);
 	INSTR_TIME_SUBTRACT(currenttime, query->totaltime->starttime);
 
-	appendStringInfo(ps->str, "time used (s): %.0g\n",  INSTR_TIME_GET_MILLISEC(currenttime)/1000);
+	appendStringInfo(ps->str, "time used (s): %.0f\n",  INSTR_TIME_GET_MILLISEC(currenttime)/1000);
 }
 
 static  
