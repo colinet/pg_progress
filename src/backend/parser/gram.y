@@ -616,7 +616,7 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 	ASSERTION ASSIGNMENT ASYMMETRIC AT ATTACH ATTRIBUTE AUTHORIZATION
 
 	BACKWARD BEFORE BEGIN_P BETWEEN BIGINT BINARY BIT
-	BOOLEAN_P BOTH BUFFERS BY
+	BOOLEAN_P BOTH BY
 
 	CACHE CALLED CASCADE CASCADED CASE CAST CATALOG_P CHAIN CHAR_P
 	CHARACTER CHARACTERISTICS CHECK CHECKPOINT CLASS CLOSE
@@ -683,7 +683,7 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 	SUBSCRIPTION SUBSTRING SYMMETRIC SYSID SYSTEM_P
 
 	TABLE TABLES TABLESAMPLE TABLESPACE TEMP TEMPLATE TEMPORARY TEXT_P THEN
-	TIME TIMING TIMESTAMP TO TRAILING TRANSACTION TRANSFORM TREAT TRIGGER TRIM TRUE_P
+	TIME TIMESTAMP TO TRAILING TRANSACTION TRANSFORM TREAT TRIGGER TRIM TRUE_P
 	TRUNCATE TRUSTED TYPE_P TYPES_P
 
 	UNBOUNDED UNCOMMITTED UNENCRYPTED UNION UNIQUE UNKNOWN UNLISTEN UNLOGGED
@@ -10405,22 +10405,6 @@ PROGRESS Iconst
 		n->options = list_make1(makeDefElem("verbose", NULL, @2));
                 $$ = (Node *) n;
 }
-| PROGRESS BUFFERS Iconst
-        {
-                ProgressStmt *n = makeNode(ProgressStmt);
-
-                n->pid = $3;
-		n->options = list_make1(makeDefElem("buffers", NULL, @2));
-                $$ = (Node *) n;
-}
-| PROGRESS TIMING Iconst
-        {
-                ProgressStmt *n = makeNode(ProgressStmt);
-
-                n->pid = $3;
-		n->options = list_make1(makeDefElem("timing", NULL, @2));
-                $$ = (Node *) n;
-}
 | PROGRESS '(' progress_option_list ')' Iconst 
 	{
 		ProgressStmt *n = makeNode(ProgressStmt);
@@ -10446,12 +10430,6 @@ progress_option_name progress_option_arg {
 progress_option_name: FORMAT
 {
 	$$ = "format";
-}
-| BUFFERS {
-	$$ = "buffers";
-}
-| TIMING {
-	$$ = "timing";
 }
 ;
 
@@ -15117,7 +15095,6 @@ reserved_keyword:
 			| ASC
 			| ASYMMETRIC
 			| BOTH
-			| BUFFERS
 			| CASE
 			| CAST
 			| CHECK
@@ -15174,7 +15151,6 @@ reserved_keyword:
 			| SYMMETRIC
 			| TABLE
 			| THEN
-			| TIMING
 			| TO
 			| TRAILING
 			| TRUE_P
