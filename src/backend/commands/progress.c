@@ -852,9 +852,10 @@ static void ProgressNode(
 }
 
 
-/*********************************************************************************
- * Indivual Progress report function for the different execution nodes starts here
- *********************************************************************************/
+/**********************************************************************************
+ * Indivual Progress report functions for the different execution nodes starts here.
+ * These functions are leaf function of the Progress tree of functions to be called.
+ **********************************************************************************/
 
 
 /*
@@ -866,6 +867,9 @@ void ProgressScanBlks(ScanState* ss, ReportState* ps)
 	HeapScanDesc hsd;
 	ParallelHeapScanDesc phsd;
 	unsigned int nr_blks;
+
+	if (ss == NULL)
+		return;
 
 	hsd = ss->ss_currentScanDesc;
 	if (hsd == NULL) {
@@ -907,6 +911,9 @@ void ProgressScanRows(Scan* plan, PlanState* planstate, ReportState* ps)
 	RangeTblEntry* rte;
 	char* objectname;
 
+	if (plan == NULL)
+		return;
+
 	rti = plan->scanrelid; 
 	rte = rt_fetch(rti, ps->rtable);
 
@@ -920,7 +927,8 @@ void ProgressScanRows(Scan* plan, PlanState* planstate, ReportState* ps)
 
 	if (ps->format == REPORT_FORMAT_TEXT) {
 		appendStringInfo(ps->str, " => rows %ld/%ld %d%%",
-			(long int) planstate->plan_rows, (long int) plan->plan.plan_rows,
+			(long int) planstate->plan_rows,
+			(long int) plan->plan.plan_rows,
 			(unsigned short) planstate->percent_done);
 	}
 }
@@ -948,6 +956,9 @@ void ProgressTidScan(TidScanState* ts, ReportState* ps)
 static
 void ProgressLimit(LimitState* ls, ReportState* ps)
 {
+	if (ls == NULL)
+		return;
+
 	if (ps->format == REPORT_FORMAT_TEXT) {
 		if (ls->position == 0) {
 			appendStringInfoSpaces(ps->str, ps->indent * 2);
@@ -974,6 +985,9 @@ void ProgressLimit(LimitState* ls, ReportState* ps)
 static
 void ProgressCustomScan(CustomScanState* cs, ReportState* ps)
 {
+	if (cs == NULL)
+		return;
+
 	if (cs->methods->ProgressCustomScan) {
 		cs->methods->ProgressCustomScan(cs, NULL, ps);
 	}
@@ -1004,7 +1018,7 @@ void ProgressIndexScan(IndexScanState* is, ReportState* ps)
 }
 
 static
-void ProgressModifyTable(ModifyTableState * mts, ReportState* ps)
+void ProgressModifyTable(ModifyTableState *mts, ReportState* ps)
 {
 	EState* es;
 
@@ -1021,21 +1035,21 @@ void ProgressModifyTable(ModifyTableState * mts, ReportState* ps)
 }
 
 static
-void ProgressHash(HashState* planstate, ReportState* ps)
+void ProgressHash(HashState* hs, ReportState* ps)
 {
-	if (planstate == NULL)
+	if (hs == NULL)
 		return;
 	
-	ProgressHashJoinTable((HashJoinTable) planstate->hashtable, ps);
+	ProgressHashJoinTable((HashJoinTable) hs->hashtable, ps);
 }
 
 static
-void ProgressHashJoin(HashJoinState* planstate, ReportState* ps)
+void ProgressHashJoin(HashJoinState* hjs, ReportState* ps)
 {
-	if (planstate == NULL)
+	if (hjs == NULL)
 		return;
 
-	ProgressHashJoinTable((HashJoinTable) planstate->hj_HashTable, ps);
+	ProgressHashJoinTable((HashJoinTable) hjs->hj_HashTable, ps);
 }
 
 /*
@@ -1119,6 +1133,9 @@ void ProgressBufFileRW(BufFile* bf, ReportState* ps,
 	struct buffile_state* bfs;
 	int i;
 
+	if (bf == NULL)
+		return;
+
 	*reads = 0;
 	*writes = 0;
 
@@ -1138,6 +1155,9 @@ void ProgressBufFile(BufFile* bf, ReportState* ps)
 	int i;
 	struct buffile_state* bfs;
 	MemoryContext oldcontext;
+	
+	if (bf == NULL)
+		return;
 
         oldcontext = MemoryContextSwitchTo(ps->memcontext);
 	bfs = BufFileState(bf);
@@ -1157,6 +1177,9 @@ static
 void ProgressMaterial(MaterialState* planstate, ReportState* ps)
 {
 	Tuplestorestate* tss;
+
+	if (planstate == NULL)
+		return;
 
 	tss = planstate->tuplestorestate;
 	ProgressTupleStore(tss, ps);
@@ -1327,6 +1350,9 @@ void dumpTapes(struct ts_report* tsr, ReportState* ps)
 	int i;
 	int percent_effective;
 
+	if (tsr == NULL)
+		return;
+
 	if (ps->verbose) {
 		appendStringInfoSpaces(ps->str, ps->indent * 2);
 		appendStringInfo(ps->str, ": total=%d actives=%d",
@@ -1362,6 +1388,9 @@ static
 void ReportTime(QueryDesc* query, ReportState* ps)
 {
 	instr_time currenttime;
+
+	if (query == NULL)
+		return;
 
 	if (query->totaltime == NULL)
 		return;
