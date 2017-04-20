@@ -135,6 +135,12 @@ static void ProgressSort(SortState* ss, ReportState* ps);
 static void ProgressTupleSort(Tuplesortstate* tss, ReportState* ps); 
 static void dumpTapes(struct ts_report* tsr, ReportState* ps);
 
+static void ReportTime(QueryDesc* query, ReportState* ps);
+static void ReportStack(QueryDesc* query, ReportState* ps);
+static void ReportRSS(QueryDesc* query, ReportState* ps);
+static void ReportDisk(QueryDesc* query, ReportState* ps);
+
+
 
 Size ProgressShmemSize(void)
 {
@@ -437,6 +443,10 @@ void HandleProgressRequest(void)
 
 	ReportBeginOutput(ps);
 	ProgressPlan(MyQueryDesc, ps);
+	ReportTime(MyQueryDesc, ps);
+	ReportStack(MyQueryDesc, ps);
+	ReportRSS(MyQueryDesc, ps);
+	ReportDisk(MyQueryDesc, ps);
 	ReportEndOutput(ps);
 
 out:
@@ -987,7 +997,8 @@ void ProgressIndexScan(IndexScanState* is, ReportState* ps)
 
 	if (ps->format == REPORT_FORMAT_TEXT) {
 		appendStringInfo(ps->str, " => rows %ld/%ld %d%%",
-			(long int) planstate.plan_rows, (long int) p->plan_rows,
+			(long int) planstate.plan_rows,
+			(long int) p->plan_rows,
 			(unsigned short) planstate.percent_done);
 	}
 }
@@ -1036,11 +1047,12 @@ void ProgressHashJoinTable(HashJoinTable hashtable, ReportState* ps)
 	int i;
 	unsigned long reads;
 	unsigned long writes;
-
 	unsigned long lreads;
 	unsigned long lwrites;
 
-	/* Could be used but not yet allocated */
+	/*
+	 * Could be used but not yet allocated
+	 */
 	if (hashtable == NULL)
 		return;
 		
@@ -1049,7 +1061,9 @@ void ProgressHashJoinTable(HashJoinTable hashtable, ReportState* ps)
 
 	appendStringInfo(ps->str, " hashtable nbatch %d", hashtable->nbatch);
 
-	/* Display global reads and writes */
+	/*
+	 * Display global reads and writes
+	 */
 	reads = 0;
 	writes = 0;
 	for (i = 0; i < hashtable->nbatch; i++) {
@@ -1065,11 +1079,12 @@ void ProgressHashJoinTable(HashJoinTable hashtable, ReportState* ps)
 			writes += lwrites;
 		}
 	}
-	//appendStringInfoSpaces(ps->str, ps->indent * 2);
-	appendStringInfo(ps->str, " kbytes read/write %ld/%ld",
-		reads/1024, writes/1024);
 
-	/* Only display details if requested */
+	appendStringInfo(ps->str, " kbytes read/write %ld/%ld", reads/1024, writes/1024);
+
+	/*
+	 * Only display details if requested
+	 */ 
 	if (ps->verbose == false)
 		return;
 
@@ -1232,7 +1247,10 @@ void ProgressTupleSort(Tuplesortstate* tss, ReportState* ps)
 {
 	struct ts_report* tsr;
 	MemoryContext oldcontext;
-		
+	
+	if (tss == NULL)
+		return;
+	
 	oldcontext = MemoryContextSwitchTo(ps->memcontext);
 	tsr = tuplesort_get_state(tss);
 	MemoryContextSwitchTo(oldcontext);
@@ -1339,3 +1357,36 @@ void dumpTapes(struct ts_report* tsr, ReportState* ps)
 		tsr->tp_read_effective, tsr->tp_write_effective,
 		percent_effective);
 }
+
+static
+void ReportTime(QueryDesc* query, ReportState* ps)
+{
+	instr_time currenttime;
+
+	if (query->totaltime == NULL)
+		return;
+
+	INSTR_TIME_SET_CURRENT(currenttime);
+	INSTR_TIME_SUBTRACT(currenttime, query->totaltime->starttime);
+
+	appendStringInfo(ps->str, "time used (s): %.0g\n",  INSTR_TIME_GET_MILLISEC(currenttime)/1000);
+}
+
+static  
+void ReportStack(QueryDesc* query, ReportState* ps)
+{
+
+}
+
+static 
+void ReportRSS(QueryDesc* query , ReportState*  ps)
+{
+
+}
+
+static
+void ReportDisk(QueryDesc* query, ReportState*  ps)
+{
+
+}
+
