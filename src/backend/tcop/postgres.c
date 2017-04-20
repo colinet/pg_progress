@@ -3119,19 +3119,9 @@ check_stack_depth(void)
 bool
 stack_is_too_deep(void)
 {
-	char		stack_top_loc;
 	long		stack_depth;
 
-	/*
-	 * Compute distance from reference point to my local variables
-	 */
-	stack_depth = (long) (stack_base_ptr - &stack_top_loc);
-
-	/*
-	 * Take abs value, since stacks grow up on some machines, down on others
-	 */
-	if (stack_depth < 0)
-		stack_depth = -stack_depth;
+	stack_depth = get_stack_depth();
 
 	/*
 	 * Trouble?
@@ -3154,14 +3144,45 @@ stack_is_too_deep(void)
 	 * Note we assume that the same max_stack_depth applies to both stacks.
 	 */
 #if defined(__ia64__) || defined(__ia64)
-	stack_depth = (long) (ia64_get_bsp() - register_stack_base_ptr);
-
 	if (stack_depth > max_stack_depth_bytes &&
 		register_stack_base_ptr != NULL)
 		return true;
 #endif   /* IA64 */
 
 	return false;
+}
+
+long
+get_stack_depth(void)
+{
+	char		stack_top_loc;
+	long		stack_depth;
+
+	/*
+	 * Compute distance from reference point to my local variables
+	 */
+	stack_depth = (long) (stack_base_ptr - &stack_top_loc);
+
+	/*
+	 * Take abs value, since stacks grow up on some machines, down on others
+	 */
+	if (stack_depth < 0)
+		stack_depth = -stack_depth;
+
+	/*
+	 * On IA64 there is a separate "register" stack that requires its own
+	 * independent check.  For this, we have to measure the change in the
+	 * "BSP" pointer from PostgresMain to here.  Logic is just as above,
+	 * except that we know IA64's register stack grows up.
+	 *
+	 * Note we assume that the same max_stack_depth applies to both stacks.
+	 */
+#if defined(__ia64__) || defined(__ia64)
+	stack_depth = (long) (ia64_get_bsp() - register_stack_base_ptr);
+
+#endif   /* IA64 */
+
+	return stack_depth;
 }
 
 /* GUC check hook for max_stack_depth */
