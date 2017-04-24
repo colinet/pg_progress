@@ -208,13 +208,10 @@ show_plan_tlist(PlanState *planstate, List *ancestors, ReportState *es)
 		((ForeignScan *) plan)->operation != CMD_SELECT)
 		return;
 
-	elog(LOG, "TGT step 2");
-
 	/* Set up deparsing context */
 	context = set_deparse_context_planstate(es->deparse_cxt,
 											(Node *) planstate,
 											ancestors);
-	elog(LOG, "TGT step 3");
 	useprefix = list_length(es->rtable) > 1;
 
 	/* Deparse each result column (we now include resjunk ones) */
@@ -222,17 +219,13 @@ show_plan_tlist(PlanState *planstate, List *ancestors, ReportState *es)
 	{
 		TargetEntry *tle = (TargetEntry *) lfirst(lc);
 
-		elog(LOG, "TGT step 4");
 		result = lappend(result,
 						 deparse_expression((Node *) tle->expr, context,
 											useprefix, false));
 	}
 
-	elog(LOG, "TGT step 5");
 	/* Print results */
 	ReportPropertyList("Output", result, es);
-
-	elog(LOG, "TGT end of show_plan_tlist");
 }
 
 void show_control_qual(PlanState *planstate, List *ancestors, ReportState *es)
@@ -1370,7 +1363,7 @@ show_modifytable_info(ModifyTableState *mtstate, List *ancestors,
 		ReportProperty("Conflict Resolution",
 						node->onConflictAction == ONCONFLICT_NOTHING ?
 						"NOTHING" : "UPDATE",
-						false, es);
+						false, es, true);
 
 		/*
 		 * Don't display arbiter indexes at all when DO NOTHING variant
@@ -1628,13 +1621,16 @@ ReportPropertyListNested(const char *qlabel, List *data, ReportState *rpt)
  */
 void
 ReportProperty(const char *qlabel, const char *value, bool numeric,
-				ReportState *rpt)
+				ReportState *rpt, bool newline)
 {
 	switch (rpt->format)
 	{
 		case REPORT_FORMAT_TEXT:
 			appendStringInfoSpaces(rpt->str, rpt->indent * 2);
-			appendStringInfo(rpt->str, "%s: %s\n", qlabel, value);
+			if (newline)
+				appendStringInfo(rpt->str, "%s: %s\n", qlabel, value);
+			else 
+				appendStringInfo(rpt->str, "%s: %s", qlabel, value);
 			break;
 
 		case REPORT_FORMAT_XML:
@@ -1733,7 +1729,7 @@ void ReportProperties(Plan* plan, PlanInfo* info, const char* plan_name,
 void
 ReportPropertyText(const char *qlabel, const char *value, ReportState* rpt)
 {
-	ReportProperty(qlabel, value, false, rpt);
+	ReportProperty(qlabel, value, false, rpt, true);
 }
 
 /*
@@ -1745,7 +1741,19 @@ ReportPropertyInteger(const char *qlabel, int value, ReportState *rpt)
 	char	buf[32];
 
 	snprintf(buf, sizeof(buf), "%d", value);
-	ReportProperty(qlabel, buf, true, rpt);
+	ReportProperty(qlabel, buf, true, rpt, true);
+}
+
+/*
+ * Explain an integer-valued property without newline.
+ */
+void
+ReportPropertyIntegerNoNewLine(const char *qlabel, int value, ReportState *rpt)
+{
+	char	buf[32];
+
+	snprintf(buf, sizeof(buf), "%d", value);
+	ReportProperty(qlabel, buf, true, rpt, false);
 }
 
 /*
@@ -1757,7 +1765,19 @@ ReportPropertyLong(const char *qlabel, long value, ReportState *rpt)
 	char	buf[32];
 
 	snprintf(buf, sizeof(buf), "%ld", value);
-	ReportProperty(qlabel, buf, true, rpt);
+	ReportProperty(qlabel, buf, true, rpt, true);
+}
+
+/*
+ * Explain a long-integer-valued property without newline.
+ */
+void
+ReportPropertyLongNoNewLine(const char *qlabel, long value, ReportState *rpt)
+{
+	char	buf[32];
+
+	snprintf(buf, sizeof(buf), "%ld", value);
+	ReportProperty(qlabel, buf, true, rpt, false);
 }
 
 /*
@@ -1771,7 +1791,7 @@ ReportPropertyFloat(const char *qlabel, double value, int ndigits,
 	char		buf[256];
 
 	snprintf(buf, sizeof(buf), "%.*f", ndigits, value);
-	ReportProperty(qlabel, buf, true, rpt);
+	ReportProperty(qlabel, buf, true, rpt, true);
 }
 
 /*
@@ -1780,7 +1800,7 @@ ReportPropertyFloat(const char *qlabel, double value, int ndigits,
 void
 ReportPropertyBool(const char *qlabel, bool value, ReportState *rpt)
 {
-	ReportProperty(qlabel, value ? "true" : "false", true, rpt);
+	ReportProperty(qlabel, value ? "true" : "false", true, rpt, true);
 }
 
 /*
@@ -2117,4 +2137,37 @@ ReportNewLine(ReportState* rpt)
 	if (rpt->format == REPORT_FORMAT_TEXT) {
                 appendStringInfoChar(rpt->str, '\n');
         }
+}
+
+/*
+ * Add a space to TEXT format output
+ */
+void 
+ReportSpace(ReportState* rpt)
+{
+	if (rpt->format == REPORT_FORMAT_TEXT) {
+		appendStringInfoSpaces(rpt->str, 1);
+	}
+}
+
+/*
+ * Add a space to TEXT format output
+ */
+void
+ReportSpaces(unsigned short nr_spaces, ReportState* rpt)
+{
+        if (rpt->format == REPORT_FORMAT_TEXT) {
+                appendStringInfoSpaces(rpt->str, nr_spaces);
+        }
+}
+
+/*
+ * Add text separator to TEXT format output
+ */
+void 
+ReportSeparator(const char* text, ReportState* rpt)
+{
+	if (rpt->format == REPORT_FORMAT_TEXT) {
+		appendStringInfo(rpt->str, "%s", text);
+	}
 }

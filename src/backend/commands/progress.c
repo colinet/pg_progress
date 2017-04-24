@@ -46,8 +46,10 @@
 #include "miscadmin.h"
 #include "pgstat.h"
 
-static int log_stmt = 0;		/* log query monitored */
+static int log_stmt = 1;		/* log query monitored */
 static int debug = 0;
+
+bool inline_output;			/* For TEXT output, use inline as much as possible */
 
 /* 
  * Monitoring progress waits 5secs for monitored backend response.
@@ -70,7 +72,8 @@ unsigned short PROGRESS_TIMEOUT = 5;
  * independantly of the otther backends.
  *
  * The LWLock ensure that one backend can be only monitored by one other backend at a time.
- * Other backends trying to monitor an already monitered backend will be put in queue of the LWWlock.
+ * Other backends trying to monitor an already monitered backend will be put in
+ * queue of the LWWlock.
  */
 typedef struct ProgressCtl {
 	ReportFormat format; 		/* format of the progress response to be delivered */
@@ -79,9 +82,7 @@ typedef struct ProgressCtl {
 	 * options
 	 */
         bool verbose;			/* be verbose */
-        bool buffers;			/* print buffer usage */
-        bool timing;			/* print detailed node timing */
-
+	bool inline_output;		/* dense output on one line if possible */
 
 	char* buf;			/* progress status report in shm */
 	struct Latch* latch;		/* Used by requestor to wait for backend to complete its report */
@@ -89,8 +90,8 @@ typedef struct ProgressCtl {
 
 struct ProgressCtl* progress_ctl_array;	/* Array of MaxBackends ProgressCtl */
 char* dump_buf_array;			/* SHMEM buffers one for each backend */
-struct Latch* resp_latch_array;		/* Array of MaxBackends latches to synchronize response from 
-					 * monitored backend to monitoring backend */
+struct Latch* resp_latch_array;		/* Array of MaxBackends latches to synchronize response
+					 * from monitored backend to monitoring backend */
 
 /*
  * No progress request unless requested.
@@ -135,6 +136,9 @@ static void ProgressSort(SortState* ss, ReportState* ps);
 static void ProgressTupleSort(Tuplesortstate* tss, ReportState* ps); 
 static void dumpTapes(struct ts_report* tsr, ReportState* ps);
 
+extern void ReportText(const char* label, const char* value, ReportState* rpt);
+extern void ReportTextNoNewLine(const char* label, const char* value, ReportState* rpt);
+
 static void ReportTime(QueryDesc* query, ReportState* ps);
 static void ReportStack(QueryDesc* query, ReportState* ps);
 static void ReportRSS(QueryDesc* query, ReportState* ps);
@@ -162,7 +166,9 @@ void ProgressShmemInit(void)
 	bool found;
 	size_t size = 0;
 
-	/* Allocated shared latches for response to progress request */
+	/*
+ 	 * Allocated shared latches for response to progress request
+ 	 */
 	size = mul_size(MaxBackends, sizeof(struct Latch));
 	resp_latch_array = ShmemInitStruct("Progress latches", size, &found);
 	if (!found) {
@@ -176,14 +182,18 @@ void ProgressShmemInit(void)
 		}	
 	}
 
-	/* Allocate SHMEM buffers for backend communication */
+	/*
+	 * Allocate SHMEM buffers for backend communication
+	 */
 	size = MaxBackends * PROGRESS_AREA_SIZE;
 	dump_buf_array = (char*) ShmemInitStruct("Backend Dump Pages", size, &found);
 	if (!found) {
         	memset(dump_buf_array, 0, size);
 	}
 
-	/* Allocate progress request meta data, one for each backend */
+	/*
+	 * Allocate progress request meta data, one for each backend
+	 */
 	size = mul_size(MaxBackends, sizeof(ProgressCtl));
 	progress_ctl_array = ShmemInitStruct("ProgressCtl array", size, &found);
 	if (!found) {
@@ -236,9 +246,12 @@ void ProgressSendRequest(
 	ProgressCtl* req;			// Used for the request
 	TupOutputState* tstate;
 	char* buf;
+
 	MemoryContext local_context;
 	MemoryContext old_context;
+
 	char* backend_timeout = "<backend timeout>";
+	unsigned short did_timeout = 0;
 
 	/* Convert pid to backend_id */
 	bid = ProcPidGetBackendId(stmt->pid);
@@ -278,6 +291,7 @@ void ProgressSendRequest(
 	/* Fetch result and clear SHM buffer */
 	if (strlen(req->buf) == 0) {
 		/* We have timed out on PROGRESS_TIMEOUT */
+		did_timeout = 1;	
 		memcpy(buf, backend_timeout, strlen(backend_timeout));
 	} else {
 		/* We have a result computed by the monitored backend */
@@ -287,6 +301,13 @@ void ProgressSendRequest(
 
 	/* End serialization */
 	LWLockRelease(ProgressLock);
+
+	if (did_timeout) {
+		MemoryContextDelete(local_context);     // pfree(buf);
+		ereport(ERROR, (
+		errcode(ERRCODE_INTERVAL_FIELD_OVERFLOW),
+		errmsg("timeout to get response")));
+	}
 
 	/* Send response to client */
 	tstate = begin_tup_output_tupdesc(dest, ProgressResultDesc(req));
@@ -308,8 +329,7 @@ static void ProgressGetOptions(ProgressCtl* req, ProgressStmt* stmt, ParseState*
 	/* default options */
 	req->format = REPORT_FORMAT_TEXT;
 	req->verbose = 0;
-	req->buffers = 0;
-	req->timing = 0;
+	req->inline_output = false;
 
 	/*
 	 * Check for format option
@@ -322,23 +342,32 @@ static void ProgressGetOptions(ProgressCtl* req, ProgressStmt* stmt, ParseState*
 
 			if (strcmp(p, "xml") == 0) {
 				result_type = REPORT_FORMAT_XML;
+				inline_output = false;
 			} else if (strcmp(p, "json") == 0) {
 				result_type = REPORT_FORMAT_JSON;
+				inline_output = false;
 			} else if (strcmp(p, "yaml") == 0) {
 				result_type = REPORT_FORMAT_YAML;
+				inline_output = false;
 			} else if (strcmp(p, "text") == 0) {
 				result_type = REPORT_FORMAT_TEXT;
+				inline_output = false;
+			} else if (strcmp(p, "inline") == 0) {
+				result_type = REPORT_FORMAT_TEXT;
+				inline_output = true;
 			} else {
 				ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-					errmsg("unrecognized value for EXPLAIN option \"%s\": \"%s\"",
+					errmsg("unrecognized value for PROGRESS option \"%s\": \"%s\"",
 					opt->defname, p), parser_errposition(pstate, opt->location)));
 			}
+
 			req->format = result_type;
+			req->inline_output = inline_output;
 		} else if (strcmp(opt->defname, "verbose") == 0) {
 			req->verbose = defGetBoolean(opt);
 		} else {
 			ereport(ERROR, (errcode(ERRCODE_SYNTAX_ERROR),
-				errmsg("unrecognized EXPLAIN option \"%s\"", opt->defname),
+				errmsg("unrecognized PROGRESS option \"%s\"", opt->defname),
 					parser_errposition(pstate, opt->location)));
 		}
 	}
@@ -385,6 +414,8 @@ void HandleProgressRequest(void)
 	MemoryContext progress_context;
 	char* shmBufferTooShort = "shm buffer is too small";
 
+	unsigned short running = 0;
+
 	/*
 	 * We hold interrupt here because the current SQL query could be cancelled at any time. In which 
 	 * case, the current backend would not call SetLatch(). Monitoring backend would wait endlessly.
@@ -409,48 +440,62 @@ void HandleProgressRequest(void)
 
 	req = progress_ctl_array + MyBackendId;
 
-	/* Clear previous content of ps->str */
 	ps->format = req->format;
 	ps->verbose = req->verbose;
-	ps->buffers = req->buffers;
-	ps->timing = req->timing;
+	ps->inline_output = req->inline_output;
+	inline_output = ps->inline_output;
+
+	/*
+	 * Clear previous content of ps->str
+	 */
 	resetStringInfo(ps->str);
 
+	ReportBeginOutput(ps);
+
 	if (MyQueryDesc == NULL) {
-		appendStringInfo(ps->str, "<idle backend>\n");
-		goto out;
-	}
+		ReportText("status", "<idle backend>", ps);
+	} else if (!IsTransactionState()) {
+		ReportText("status", "<out of transaction>", ps);
+	} else if (MyQueryDesc->plannedstmt == NULL) {
+		if (inline_output) {
+			appendStringInfo(ps->str, "status: <NULL planned statement>\n");
+		} else {
+			ReportText("status", "<NULL planned statement>", ps);
+		}
+	} else if (MyQueryDesc->plannedstmt->commandType == CMD_UTILITY) {
+		if (inline_output) {
+			appendStringInfo(ps->str, "status: <utility statement>\n");
+		} else {
+			ReportText("status", "<utility statement>", ps);
+		}
+	} else {
+		if (inline_output) {
+			appendStringInfo(ps->str, "status: <query running>\n");
+		} else {
+			ReportText("status", "<query running>", ps);
+		}
 
-	if (!IsTransactionState()) {
-		appendStringInfo(ps->str, "<out of transaction>\n");
-		goto out;
-	}
-
-	if (MyQueryDesc->plannedstmt == NULL) {
-		appendStringInfo(ps->str, "<NULL planned statement>");
-		goto out;
-	}
-
-	if (MyQueryDesc->plannedstmt->commandType == CMD_UTILITY) {
-		appendStringInfo(ps->str, "<utility statement>\n");
-		goto out;
+		running = 1;
 	}
 
 	if (log_stmt) {
-		appendStringInfo(ps->str, "QUERY: %s", MyQueryDesc->sourceText);
-		appendStringInfoChar(ps->str, '\n');
+		if (MyQueryDesc != NULL && MyQueryDesc->sourceText != NULL)
+			ReportText("query", MyQueryDesc->sourceText, ps);	
 	}
 
-	ReportBeginOutput(ps);
-	ProgressPlan(MyQueryDesc, ps);
-	ReportTime(MyQueryDesc, ps);
-	ReportStack(MyQueryDesc, ps);
-	ReportRSS(MyQueryDesc, ps);
-	ReportDisk(MyQueryDesc, ps);
+	if (running) {
+		ReportTime(MyQueryDesc, ps);
+		ProgressPlan(MyQueryDesc, ps);
+		ReportStack(MyQueryDesc, ps);
+		ReportRSS(MyQueryDesc, ps);
+		ReportDisk(MyQueryDesc, ps);
+	}
+
 	ReportEndOutput(ps);
 
-out:
-	/* Dump in SHM the string buffer content */
+	/* 
+	 * Dump in SHM the string buffer content
+	 */
 	if (strlen(ps->str->data) < PROGRESS_AREA_SIZE) {
 		/* Mind the '\0' char at the end of the string */
 		memcpy(req->buf, ps->str->data, strlen(ps->str->data) + 1); 
@@ -465,6 +510,18 @@ out:
 	
 	SetLatch(req->latch);		// Notify of progress state delivery
 	RESUME_INTERRUPTS();
+}
+
+void
+ReportText(const char* label, const char* value, ReportState* rpt)
+{
+	ReportProperty(label, value, false, rpt, true);
+}
+
+void 
+ReportTextNoNewLine(const char* label, const char* value, ReportState* rpt)
+{
+	ReportProperty(label, value, false, rpt, false);
 }
 
 static void ProgressPlan(
@@ -524,6 +581,7 @@ static void ProgressNode(
 	if (debug)
 		elog(LOG, "=> %s", nodeToString(plan));
 
+	
 	/*
 	 * 1st step: display the node type
 	 */
@@ -532,7 +590,9 @@ static void ProgressNode(
 		elog(LOG, "unknown node type for plan");
 	}
 
-	ReportOpenGroup("Progress", relationship ? NULL : "Progress", true, ps);
+	elog(LOG, "ProgressNode Node = %s, STR = %s", info.pname, ps->str->data);
+
+	ReportOpenGroup("Progress", relationship != NULL ? relationship : "progress", true, ps);
 	ReportProperties(plan, &info, plan_name, relationship, ps);
 
 	/*
@@ -673,6 +733,7 @@ static void ProgressNode(
 		if (ps->format == REPORT_FORMAT_TEXT) {
 			appendStringInfo(ps->str, " %s", setopcmd);
 		} else {
+			ReportNewLine(ps);
 			ReportPropertyText("Command", setopcmd, ps);
 		}
 
@@ -697,14 +758,15 @@ static void ProgressNode(
 
 	case T_Agg:		// ScanState
 		/* 
-		 * Use tuplesortstate 2 times.
-		 * Not reflected in child nodes
+		 * Use tuplesortstate 2 times. Not reflected in child nodes
 		 */
 		ProgressAgg((AggState*) planstate, ps);
 		break;
 
 	case T_WindowAgg:	// ScanState
-		// Has a Tuplestorestate (field buffer)
+		/*
+		 * Has a Tuplestorestate (field buffer)
+		 */
 		ProgressTupleStore(((WindowAggState*) plan)->buffer, ps);
 		break;
 
@@ -760,7 +822,7 @@ static void ProgressNode(
 	 */
 	haschildren = ReportHasChildren(plan, planstate);
 	if (haschildren) {
-		ReportOpenGroup("Progress", "Progress", false, ps);
+		//ReportOpenGroup("Progress", "children", false, ps);
 		ancestors = lcons(planstate, ancestors);
 	}
 
@@ -839,7 +901,7 @@ static void ProgressNode(
 	 */
 	if (haschildren) {
 		ancestors = list_delete_first(ancestors);
-		ReportCloseGroup("Progress", "Progress", false, ps);
+		//ReportCloseGroup("Progress", "children", false, ps);
 	}
 
 	/*
@@ -849,13 +911,20 @@ static void ProgressNode(
 		ps->indent = save_indent;
 	}
 	
-	ReportCloseGroup("Progress", relationship ? NULL : "Plan", true, ps);
+	ReportCloseGroup("Progress", relationship != NULL ? relationship : "progress", true, ps);
 }
 
 
 /**********************************************************************************
  * Indivual Progress report functions for the different execution nodes starts here.
  * These functions are leaf function of the Progress tree of functions to be called.
+ *
+ * For each of theses function, we need to be paranoiac because the execution tree
+ * and plan tree can be in any state. Which means, that any pointer may be NULL.
+ *
+ * Only ReportState data is reliable. Pointers about ReportState data can be reference
+ * without checking pointers values. All other data must be checked against NULL 
+ * pointers.
  **********************************************************************************/
 
 
@@ -878,17 +947,24 @@ void ProgressScanBlks(ScanState* ss, ReportState* ps)
 	}
 
 	phsd = hsd->rs_parallel;
-
 	if (hsd->rs_parallel != NULL) {
+		/* Parallel query */
 		if (phsd->phs_nblocks != 0 && phsd->phs_cblock != InvalidBlockNumber) {
 			if (phsd->phs_cblock > phsd->phs_startblock)
 				nr_blks = phsd->phs_cblock - phsd->phs_startblock;
 			else
 				nr_blks = phsd->phs_cblock + phsd->phs_nblocks - phsd->phs_startblock;
 
-			appendStringInfo(ps->str, " blks %u/%u %u%%", 
-				nr_blks, phsd->phs_nblocks, 
-				100 * nr_blks/(phsd->phs_nblocks));
+			if (inline_output) {
+				appendStringInfo(ps->str, " => blks %u/%u %u%%", nr_blks,
+					phsd->phs_nblocks, 100 * nr_blks / (phsd->phs_nblocks));
+			} else {
+				ReportNewLine(ps);
+				ReportPropertyLong("blocks fetched", nr_blks, ps);
+				ReportPropertyLong("blocks total", phsd->phs_nblocks, ps);
+				ReportPropertyIntegerNoNewLine("blocks percent",
+					100 * nr_blks/(phsd->phs_nblocks), ps);
+			}
 		}
 	} else {
 		/* Not a parallel query */
@@ -898,9 +974,16 @@ void ProgressScanBlks(ScanState* ss, ReportState* ps)
 			else
 				nr_blks = hsd->rs_cblock + hsd->rs_nblocks - hsd->rs_startblock;
 
-			appendStringInfo(ps->str, " blks %u/%u %u%%", 
-				nr_blks, hsd->rs_nblocks,
-				100 * nr_blks/(hsd->rs_nblocks));
+			if (inline_output) {
+				appendStringInfo(ps->str, " => blks %u/%u %u%%", nr_blks,
+					hsd->rs_nblocks, 100 * nr_blks / (hsd->rs_nblocks));
+			} else {
+				ReportNewLine(ps);
+				ReportPropertyLong("blocks fetched", nr_blks, ps);
+				ReportPropertyLong("blocks total", hsd->rs_nblocks, ps);
+				ReportPropertyIntegerNoNewLine("blocks percent",
+					100 * nr_blks/(hsd->rs_nblocks), ps);
+			}
 		}
 	}
 }
@@ -915,22 +998,31 @@ void ProgressScanRows(Scan* plan, PlanState* planstate, ReportState* ps)
 	if (plan == NULL)
 		return;
 
+	if (planstate == NULL)
+		return;
+
 	rti = plan->scanrelid; 
 	rte = rt_fetch(rti, ps->rtable);
-
-	if (ps->format == REPORT_FORMAT_TEXT)
-		appendStringInfo(ps->str, " on");
-
 	objectname = get_rel_name(rte->relid);
-	if (objectname != NULL) {
-		appendStringInfo(ps->str, " %s", quote_identifier(objectname));
-	}
 
-	if (ps->format == REPORT_FORMAT_TEXT) {
+	if (inline_output) {
+		if (objectname != NULL) {
+			appendStringInfo(ps->str, " on %s", quote_identifier(objectname));
+		}
+
 		appendStringInfo(ps->str, " => rows %ld/%ld %d%%",
 			(long int) planstate->plan_rows,
 			(long int) plan->plan.plan_rows,
 			(unsigned short) planstate->percent_done);
+	} else {
+		ReportNewLine(ps);
+		if (objectname != NULL) {
+			ReportPropertyText("relation", quote_identifier(objectname), ps);
+		}
+
+		ReportPropertyLong("rows fetched", (long int) planstate->plan_rows, ps);
+                ReportPropertyLong("rows total", (long int) plan->plan.plan_rows, ps);
+                ReportPropertyIntegerNoNewLine("rows percent", (unsigned short) planstate->percent_done, ps);
 	}
 }
 
@@ -948,9 +1040,14 @@ void ProgressTidScan(TidScanState* ts, ReportState* ps)
 	else 
 		percent = (unsigned short)(100 * (ts->tss_TidPtr) / (ts->tss_NumTids));
 		
-	if (ps->format == REPORT_FORMAT_TEXT) {
+	if (inline_output) {
 		appendStringInfo(ps->str, " => rows %ld/%ld %d%%",
 			(long int) ts->tss_TidPtr, (long int) ts->tss_NumTids, percent);
+	} else {
+		ReportNewLine(ps);
+		ReportPropertyLong("rows fetched", (long int) ts->tss_TidPtr, ps);
+		ReportPropertyLong("rows total", (long int) ts->tss_NumTids, ps);
+		ReportPropertyIntegerNoNewLine("rows percent", percent, ps);
 	}
 }
 
@@ -960,25 +1057,43 @@ void ProgressLimit(LimitState* ls, ReportState* ps)
 	if (ls == NULL)
 		return;
 
-	if (ps->format == REPORT_FORMAT_TEXT) {
+	if (inline_output) {
 		if (ls->position == 0) {
-			appendStringInfoSpaces(ps->str, ps->indent * 2);
+			appendStringInfoSpaces(ps->str, ps->indent);
 			appendStringInfo(ps->str, " => offset 0%% limit 0%%");
 			return;
 		}
 
 		if (ls->position > 0 && ls->position <= ls->offset) {
-			appendStringInfoSpaces(ps->str, ps->indent * 2);
+			appendStringInfoSpaces(ps->str, ps->indent);
 			appendStringInfo(ps->str, " => offset %d%% limit 0%%",
 				(unsigned short)(100 * (ls->position)/(ls->offset)));
 			return;
 		}
 
 		if (ls->position > ls->offset) {
-			appendStringInfoSpaces(ps->str, ps->indent * 2);
+			appendStringInfoSpaces(ps->str, ps->indent);
 			appendStringInfo(ps->str, " => offset 100%% limit %d%%",
 				(unsigned short)(100 * (ls->position - ls->offset)/(ls->count)));
 			return;
+		}
+	} else {
+		ReportNewLine(ps);
+		if (ls->position == 0) {
+			ReportPropertyInteger("offset %", 0, ps);
+			ReportPropertyIntegerNoNewLine("count %", 0, ps);
+		}
+
+		if (ls->position > 0 && ls->position <= ls->offset) {
+			ReportPropertyInteger("offset %",
+				(unsigned short)(100 * (ls->position)/(ls->offset)), ps);
+			ReportPropertyIntegerNoNewLine("count %", 0, ps);
+		}
+
+		if (ls->position > ls->offset) {
+			ReportPropertyInteger("offset %", 100, ps);
+			ReportPropertyIntegerNoNewLine("count %",
+				(unsigned short)(100 * (ls->position - ls->offset)/(ls->count)), ps);
 		}
 	}
 }
@@ -1010,11 +1125,16 @@ void ProgressIndexScan(IndexScanState* is, ReportState* ps)
 		return;
 	}
 
-	if (ps->format == REPORT_FORMAT_TEXT) {
+	if (inline_output) {
 		appendStringInfo(ps->str, " => rows %ld/%ld %d%%",
 			(long int) planstate.plan_rows,
 			(long int) p->plan_rows,
 			(unsigned short) planstate.percent_done);
+	} else {
+		ReportNewLine(ps);
+		ReportPropertyLong("rows fetched", (long int) planstate.plan_rows, ps);
+		ReportPropertyLong("rows total", (long int) p->plan_rows, ps);
+		ReportPropertyIntegerNoNewLine("rows %", (unsigned short) planstate.percent_done, ps);
 	}
 }
 
@@ -1030,8 +1150,10 @@ void ProgressModifyTable(ModifyTableState *mts, ReportState* ps)
 	if (es == NULL)
 		return;
 
-	if (ps->format == REPORT_FORMAT_TEXT) {
-		appendStringInfo(ps->str, " => rows %ld", (long int) es->es_processed);
+	if (inline_output) {
+		appendStringInfo(ps->str, " => rows modified %ld", (long int) es->es_processed);
+	} else {
+		ReportPropertyLongNoNewLine("rows modified", (long int) es->es_processed, ps);
 	}
 }
 
@@ -1074,7 +1196,12 @@ void ProgressHashJoinTable(HashJoinTable hashtable, ReportState* ps)
 	if (hashtable->nbatch <= 1)
 		return;
 
-	appendStringInfo(ps->str, " hashtable nbatch %d", hashtable->nbatch);
+	if (inline_output) {
+		appendStringInfo(ps->str, " => hashtable nbatch %d", hashtable->nbatch);
+        } else {
+		ReportNewLine(ps);
+                ReportPropertyInteger("hashtable nbatch", hashtable->nbatch, ps);
+        }
 
 	/*
 	 * Display global reads and writes
@@ -1095,7 +1222,12 @@ void ProgressHashJoinTable(HashJoinTable hashtable, ReportState* ps)
 		}
 	}
 
-	appendStringInfo(ps->str, " kbytes read/write %ld/%ld", reads/1024, writes/1024);
+	if (inline_output) {
+		appendStringInfo(ps->str, " kbytes r/w %ld/%ld", reads/1024, writes/1024);
+	} else {
+		ReportPropertyInteger("kbytes read", reads/1024, ps);
+		ReportPropertyIntegerNoNewLine("kbytes write", writes/1024, ps);
+	}
 
 	/*
 	 * Only display details if requested
@@ -1103,26 +1235,66 @@ void ProgressHashJoinTable(HashJoinTable hashtable, ReportState* ps)
 	if (ps->verbose == false)
 		return;
 
+	if (hashtable->nbatch == 0)
+		return;
+
+	ReportNewLine(ps);
+
 	ps->indent++;
 	for (i = 0; i < hashtable->nbatch; i++) {
-		appendStringInfoSpaces(ps->str, ps->indent * 2);	
-		appendStringInfo(ps->str, "batch %d\n", i);
+
+		if (inline_output) {
+			appendStringInfoSpaces(ps->str, ps->indent);	
+			appendStringInfo(ps->str, "batch %d\n", i);
+		} else {
+			ReportOpenGroup("batch", "batch", false, ps);
+			ReportPropertyInteger("batch", i, ps);
+		}
+
 		if (hashtable->innerBatchFile[i]) {
-			ps->indent++;
-			appendStringInfoSpaces(ps->str, ps->indent * 2);	
-			appendStringInfo(ps->str, "inner ");
+			if (inline_output) {
+				ps->indent++;
+				appendStringInfoSpaces(ps->str, ps->indent);	
+				appendStringInfo(ps->str, "inner ");
+			} else {
+				ReportOpenGroup("inner", "inner", false, ps);
+			}
+
 			ProgressBufFile(hashtable->innerBatchFile[i], ps);
-			ps->indent--;
+
+			if (inline_output) {
+				ps->indent--;
+			} else {
+				ReportCloseGroup("inner", "inner", false, ps);
+			}
 		}
 
 		if (hashtable->outerBatchFile[i]) {
-			ps->indent++;
-			appendStringInfoSpaces(ps->str, ps->indent * 2);	
-			appendStringInfo(ps->str, "outer ");
+			if (inline_output) {
+				ps->indent++;
+				appendStringInfoSpaces(ps->str, ps->indent);	
+				appendStringInfo(ps->str, "outer ");
+			} else {
+				ReportOpenGroup("outer", "outer", false, ps);
+			}				
+
 			ProgressBufFile(hashtable->outerBatchFile[i], ps);
-			ps->indent--;
+
+			if (inline_output) {
+				ps->indent--;
+			} else {
+				ReportCloseGroup("outer", "outer", false, ps);
+			}
 		}
+
+		if (inline_output) {
+			/* EMPTY */
+		} else {
+			ReportCloseGroup("batch", "batch", false, ps);
+		}
+
 	}
+
 	ps->indent--;
 }
 
@@ -1163,15 +1335,34 @@ void ProgressBufFile(BufFile* bf, ReportState* ps)
         oldcontext = MemoryContextSwitchTo(ps->memcontext);
 	bfs = BufFileState(bf);
 	MemoryContextSwitchTo(oldcontext);
+
+	if (inline_output) {	
+		appendStringInfo(ps->str, "buffile files %d\n", bfs->numFiles);
+		ps->indent++;
+	} else {
+		ReportPropertyInteger("buffile nr files", bfs->numFiles, ps);
+	}
+
+	if (bfs->numFiles == 0)
+		return;
 	
-	appendStringInfo(ps->str, "buffile with %d files\n", bfs->numFiles);
-	ps->indent++;
 	for (i = 0; i < bfs->numFiles; i++) {
-		appendStringInfoSpaces(ps->str, ps->indent * 2);	
-		appendStringInfo(ps->str, "file %d r/w (kbytes) %d/%d\n", 
-			i, bfs->bytes_read[i]/1024, bfs->bytes_write[i]/1024);
+		if (inline_output) {
+			appendStringInfoSpaces(ps->str, ps->indent);	
+			appendStringInfo(ps->str, "file %d r/w (kbytes) %d/%d\n", 
+				i, bfs->bytes_read[i]/1024, bfs->bytes_write[i]/1024);
+		} else {
+			ReportOpenGroup("file", "file", true, ps);
+			ReportPropertyInteger("file", i, ps);
+			ReportPropertyInteger("kbytes read", bfs->bytes_read[i]/1024, ps);
+			ReportPropertyInteger("kbytes write", bfs->bytes_write[i]/1024, ps);	
+			ReportCloseGroup("file", "file", true, ps);
+		}
 	}	
-	ps->indent--;
+
+	if (inline_output) {
+		ps->indent--;
+	}
 }
 
 static
@@ -1201,40 +1392,91 @@ void ProgressTupleStore(Tuplestorestate* tss, ReportState* ps)
 
 	switch (tssr.status) {
 	case TSS_INMEM:
-		appendStringInfo(ps->str, " => memory tuples write=%ld",
-			(long int) tssr.memtupcount);
+		/* Add separator */
+		if (inline_output) {
+			appendStringInfo(ps->str, " => memory tuples write=%ld", (long int) tssr.memtupcount);
+		} else {
+			ReportNewLine(ps);
+			ReportPropertyInteger("memory tuples write", (long int) tssr.memtupcount, ps);
+		}
+
 		if (tssr.memtupskipped > 0) {
-			appendStringInfo(ps->str, " skipped=%ld", (long int) tssr.memtupskipped);
+			if (inline_output) {
+				appendStringInfo(ps->str, " skipped=%ld", (long int) tssr.memtupskipped);
+			} else {
+				ReportPropertyInteger("skipped", (long int) tssr.memtupskipped, ps);
+			}
 		}
 
-		appendStringInfo(ps->str, " read=%ld", (long int) tssr.memtupread);
+		if (inline_output) {
+			appendStringInfo(ps->str, " read=%ld", (long int) tssr.memtupread);
+		} else  {
+			ReportPropertyInteger("read", (long int) tssr.memtupread, ps);
+		}
+
 		if (tssr.memtupdeleted) {
-			appendStringInfo(ps->str, " deleted=%ld", (long int) tssr.memtupread);
+			if (inline_output) {
+				appendStringInfo(ps->str, " deleted=%ld", (long int) tssr.memtupread);
+			} else {
+				ReportPropertyInteger("deleted", (long int) tssr.memtupread, ps);
+			}
 		}
 
-		appendStringInfo(ps->str, ")");
 		break;
 	
 	case TSS_WRITEFILE:
 	case TSS_READFILE:
-		appendStringInfo(ps->str, " => file");
-		if (tssr.status == TSS_WRITEFILE)
-			appendStringInfo(ps->str, " write");
-		else 
-			appendStringInfo(ps->str, " read");
+		if (tssr.status == TSS_WRITEFILE) {
+			if (inline_output) {
+				appendStringInfo(ps->str, " => file write");
+			} else {
+				ReportNewLine(ps);
+				ReportText("file store", "write", ps);
+			}
+		} else { 
+			if (inline_output) {
+				appendStringInfo(ps->str, " => file read");
+			} else {
+				ReportNewLine(ps);
+				ReportText("file store", "read", ps);
+			}
+		}
 
-		appendStringInfo(ps->str, " readptrcount=%d", tssr.readptrcount);
-		appendStringInfo(ps->str, " rows (write=%ld", (long int ) tssr.tuples_count);
+		if (inline_output) {
+			appendStringInfo(ps->str, " readptrcount=%d", tssr.readptrcount);
+		} else {
+			ReportPropertyInteger("readptrcount", tssr.readptrcount, ps);
+		}
+
+		if (inline_output) {
+			appendStringInfo(ps->str, " rows write=%ld", (long int ) tssr.tuples_count);
+		} else {
+			ReportPropertyInteger("rows write", (long int ) tssr.tuples_count, ps);
+		}
+
 		if (tssr.tuples_skipped) {
-			appendStringInfo(ps->str, " skipped=%ld", (long int) tssr.tuples_skipped);
+			if (inline_output) {
+				appendStringInfo(ps->str, " skipped=%ld", (long int) tssr.tuples_skipped);
+			} else {
+				ReportPropertyInteger("rows skipped", (long int) tssr.tuples_skipped, ps);
+			}
 		}
 
-		appendStringInfo(ps->str, " read=%ld", (long int) tssr.tuples_read);
+		if (inline_output) {
+			appendStringInfo(ps->str, " read=%ld", (long int) tssr.tuples_read);
+		} else {
+			ReportPropertyIntegerNoNewLine("rows read", (long int) tssr.tuples_read, ps);
+		}
+			
 		if (tssr.tuples_deleted) {
-			appendStringInfo(ps->str, " deleted=%ld", (long int ) tssr.tuples_deleted);
+			ReportNewLine(ps);
+			if (inline_output) {
+				appendStringInfo(ps->str, " deleted=%ld", (long int ) tssr.tuples_deleted);
+			} else {
+				ReportPropertyIntegerNoNewLine("rows deleted", (long int ) tssr.tuples_deleted, ps);
+			}
 		}
 
-		appendStringInfo(ps->str, ")");
 		break;
 
 	default:
@@ -1272,6 +1514,8 @@ void ProgressTupleSort(Tuplesortstate* tss, ReportState* ps)
 	struct ts_report* tsr;
 	MemoryContext oldcontext;
 	
+	const char* status_sorted_on_tape = "sort completed on tapes / fetching from tapes";
+
 	if (tss == NULL)
 		return;
 	
@@ -1282,66 +1526,113 @@ void ProgressTupleSort(Tuplesortstate* tss, ReportState* ps)
 	switch (tsr->status) {
 	case TSS_INITIAL:		/* Loading tuples in mem still within memory limit */
 	case TSS_BOUNDED:		/* Loading tuples in mem into bounded-size heap */
-		appendStringInfo(ps->str, "=> loading tuples in memory %d",
-			tsr->memtupcount);
+		if (inline_output) {
+			appendStringInfo(ps->str, " in memory loading tuples %d\n", tsr->memtupcount);			
+		} else {
+			ReportNewLine(ps);
+			ReportText("status", "loading tuples in memory", ps);
+			ReportPropertyIntegerNoNewLine("tuples in memory", tsr->memtupcount, ps);	
+		}
 		break;
 
 	case TSS_SORTEDINMEM:		/* Sort completed entirely in memory */
-		appendStringInfo(ps->str, "=> sort completed in memory %d",
-			tsr->memtupcount);
+		if (inline_output) {
+			appendStringInfo(ps->str, " in memory sort completed %d\n", tsr->memtupcount);
+		} else {
+			ReportNewLine(ps);
+			ReportText("status", "sort completed in memory", ps);
+			ReportPropertyIntegerNoNewLine("tuples in memory", tsr->memtupcount, ps);
+		}
 		break;
 
 	case TSS_BUILDRUNS:		/* Dumping tuples to tape */
-		appendStringInfo(ps->str, "=> dumping tuples to tapes");
 		switch (tsr->sub_status) {
 		case TSSS_INIT_TAPES:
-			appendStringInfo(ps->str, " / init tapes");
+			if (inline_output) {
+				appendStringInfo(ps->str, " on tapes initializing");
+			} else {
+				ReportNewLine(ps);
+				ReportTextNoNewLine("status", "on tapes initializing", ps);
+			}
 			break;
 
 		case TSSS_DUMPING_TUPLES:
-			appendStringInfo(ps->str, " / dumping tuples");
+			if (inline_output) {
+				appendStringInfo(ps->str, " on tapes writing");
+			} else {
+				ReportNewLine(ps);
+				ReportTextNoNewLine("status", "on tapes writing", ps);
+			}
 			break;
 
 		case TSSS_SORTING_ON_TAPES:
-			appendStringInfo(ps->str, " / sorting on tapes");
+			if (inline_output) {
+				appendStringInfo(ps->str, " on tapes sorting");
+			} else {
+				ReportNewLine(ps);
+				ReportTextNoNewLine("status", "on tapes sorting", ps);
+			}
 			break;
 
 		case TSSS_MERGING_TAPES:
-			appendStringInfo(ps->str, " / merging tapes");
+			if (inline_output) {
+				appendStringInfo(ps->str, " on tapes merging");
+			} else {	
+				ReportNewLine(ps);
+				ReportTextNoNewLine("status", "on tapes merging", ps);
+			}
 			break;
 		default:
 			;
 		};
 
-		appendStringInfo(ps->str, "\n");
 		dumpTapes(tsr, ps);
 		break;
 	
 	case TSS_FINALMERGE: 		/* Performing final merge on-the-fly */
-		appendStringInfo(ps->str, "=> final merge sort on tapes\n");
+		if (inline_output) {
+			appendStringInfo(ps->str, " on tapes final merge");
+		} else {
+			ReportNewLine(ps);
+			ReportTextNoNewLine("status", "on tapes final merge", ps);
+		}
+
 		dumpTapes(tsr, ps);	
 		break;
 
 	case TSS_SORTEDONTAPE:		/* Sort completed, final run is on tape */
-		appendStringInfo(ps->str, "=> sort completed on tape");
 		switch (tsr->sub_status) {
 		case TSSS_FETCHING_FROM_TAPES:
-			appendStringInfo(ps->str, " / fetching from tapes");
+			if (inline_output) {
+				appendStringInfo(ps->str, " => %s", status_sorted_on_tape);
+			} else {
+				ReportNewLine(ps);
+				ReportTextNoNewLine("status", status_sorted_on_tape, ps);
+			}
 			break;
 
 		case TSSS_FETCHING_FROM_TAPES_WITH_MERGE:
-			appendStringInfo(ps->str, " / fetching from tapes with merge");
+			if (inline_output) {
+				appendStringInfo(ps->str, " on tapes sort completed => fetching from tapes with merge");
+			} else {
+				ReportNewLine(ps);
+				ReportTextNoNewLine("status", "on tapes sort completed => fetching from tapes with merge", ps);
+			}
 			break;
 		default:
 			;
 		};
 
-		appendStringInfo(ps->str, "\n");
 		dumpTapes(tsr, ps);	
 		break;
 
 	default:
-		appendStringInfo(ps->str, "=> unexpected sort state\n");
+		if (inline_output) {
+			appendStringInfo(ps->str, "=> unexpected sort state\n");
+		} else {
+			ReportNewLine(ps);
+			ReportTextNoNewLine("status", "unexpected sort state", ps);
+		}
 	};
 }
 
@@ -1355,34 +1646,83 @@ void dumpTapes(struct ts_report* tsr, ReportState* ps)
 		return;
 
 	if (ps->verbose) {
-		appendStringInfoSpaces(ps->str, ps->indent * 2);
-		appendStringInfo(ps->str, ": total=%d actives=%d",
-			tsr->maxTapes, tsr->activeTapes); 
-
-		if (tsr->result_tape != -1)
-			appendStringInfo(ps->str, " result=%d", tsr->result_tape);
-
-		appendStringInfo(ps->str, "\n");
-
-		for (i = 0; i< tsr->maxTapes; i++) {
+		if (inline_output) {
 			appendStringInfoSpaces(ps->str, ps->indent * 2);
-			appendStringInfo(ps->str, "  -> tape %d: %d %d  %d %d %d\n",	
-				i, tsr->tp_fib[i], tsr->tp_runs[i], tsr->tp_dummy[i],
-				tsr->tp_read[i], tsr->tp_write[i]);
+			appendStringInfo(ps->str, ": total=%d actives=%d",
+				tsr->maxTapes, tsr->activeTapes); 
+		} else {
+			ReportNewLine(ps);
+			ReportOpenGroup("tapes", "tapes", false, ps);
+			ReportPropertyInteger("total", tsr->maxTapes, ps);
+			ReportPropertyInteger("actives", tsr->activeTapes, ps);
+		}
+
+		if (tsr->result_tape != -1) {
+			if (inline_output) {
+				appendStringInfo(ps->str, " result=%d", tsr->result_tape);
+			} else {
+				ReportPropertyInteger("result", tsr->result_tape, ps);
+			}
+		}
+
+		if (inline_output) {
+			appendStringInfo(ps->str, "\n");
+		}
+
+		if (tsr->maxTapes != 0) {
+			for (i = 0; i< tsr->maxTapes; i++) {
+				if (inline_output) {
+					appendStringInfoSpaces(ps->str, ps->indent * 2);
+					/* TODO: test pointers */
+					appendStringInfo(ps->str, "  -> tape %d: %d %d  %d %d %d\n",
+						i, tsr->tp_fib[i], tsr->tp_runs[i], tsr->tp_dummy[i],
+						tsr->tp_read[i], tsr->tp_write[i]);
+				} else {	
+					ReportSeparator("  -> tape ", ps);
+					ReportPropertyInteger("tape idx", i, ps);
+					if (tsr->tp_fib != NULL)
+						ReportPropertyInteger("fib", tsr->tp_fib[i], ps);
+
+					if (tsr->tp_runs != NULL)
+						ReportPropertyInteger("runs", tsr->tp_runs[i], ps);
+
+					if (tsr->tp_dummy != NULL)
+						ReportPropertyInteger("dummy", tsr->tp_dummy[i], ps);
+
+					if (tsr->tp_read != NULL)
+						ReportPropertyInteger("read", tsr->tp_read[i], ps);
+
+					if (tsr->tp_write)	
+						ReportPropertyInteger("write", tsr->tp_write[i], ps);
+				}
+			}
+		}
+
+		if (inline_output) {
+			/* EMPTY */
+		} else {
+			ReportCloseGroup("tapes", "tapes", false, ps);
 		}
 	}
-
-	appendStringInfoSpaces(ps->str, ps->indent * 2);
 
 	if (tsr->tp_write_effective > 0)
 		percent_effective = (tsr->tp_read_effective * 100)/tsr->tp_write_effective;
 	else 
 		percent_effective = 0;
 
-	appendStringInfo(ps->str, "rows r/w merge %d/%d rows r/w effective %d/%d %d%%",
-		tsr->tp_read_merge, tsr->tp_write_merge,
-		tsr->tp_read_effective, tsr->tp_write_effective,
-		percent_effective);
+	if (inline_output) {
+		appendStringInfo(ps->str, " =>  rows r/w merge step %d/%d effective sort %d/%d %d%%",
+			tsr->tp_read_merge, tsr->tp_write_merge,
+			tsr->tp_read_effective, tsr->tp_write_effective,
+			percent_effective);
+	} else {	
+		ReportNewLine(ps);
+		ReportPropertyInteger("rows merge reads", tsr->tp_read_merge, ps);
+		ReportPropertyInteger("rows merge writes", tsr->tp_write_merge, ps);
+		ReportPropertyInteger("rows effective reads", tsr->tp_read_effective, ps);
+		ReportPropertyInteger("rows effective writes", tsr->tp_write_effective, ps);
+		ReportPropertyIntegerNoNewLine("percent %", percent_effective, ps);
+	}
 }
 
 static
@@ -1399,7 +1739,11 @@ void ReportTime(QueryDesc* query, ReportState* ps)
 	INSTR_TIME_SET_CURRENT(currenttime);
 	INSTR_TIME_SUBTRACT(currenttime, query->totaltime->starttime);
 
-	appendStringInfo(ps->str, "time used (s): %.0f\n",  INSTR_TIME_GET_MILLISEC(currenttime)/1000);
+	if (inline_output) {
+		appendStringInfo(ps->str, "time used (s): %.0f\n",  INSTR_TIME_GET_MILLISEC(currenttime)/1000);
+	} else {
+		ReportPropertyInteger("time used (s)", INSTR_TIME_GET_MILLISEC(currenttime)/1000, ps);
+	}
 }
 
 static  
