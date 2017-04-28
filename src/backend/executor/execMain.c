@@ -373,6 +373,7 @@ standard_ExecutorRun(QueryDesc *queryDesc,
 					direction,
 					dest,
 					execute_once);
+		queryDesc->query_completed = true;
 	}
 
 	/*

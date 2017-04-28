@@ -62,6 +62,8 @@ struct tss_report {
         int tuples_read;
 	int tuples_deleted;
 	int readptrcount;
+		
+	unsigned long disk_size;
 
 	int status;
 };

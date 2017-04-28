@@ -1494,6 +1494,8 @@ tuplestore_get_state(Tuplestorestate *state, struct tss_report* tss)
 	tss->tuples_deleted = state->tuples_deleted;
 	tss->readptrcount = state->readptrcount;
 
+	tss->disk_size = BufFileGetDiskSize(state->myfile);
+
 	tss->status = state->status;
 }
 

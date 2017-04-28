@@ -14,14 +14,14 @@
 #ifndef PROGRESS_H
 #define PROGRESS_H
 
-/* This is temporary and needed for EXPLAIN_FORMAT_ macros */
+/* This is temporary and needed for PROGRESS_FORMAT_ macros */
 #include "commands/report.h"
 
 /*
  * This is arbitratry defined
  * TODO: Add a guc variable to enable dynamic definition
  */
-#define PROGRESS_AREA_SIZE	(4096 * 64)
+#define PROGRESS_AREA_SIZE	(4096 * 128)
 
 /*
  * Track when a progress report has been requested 

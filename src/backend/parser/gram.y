@@ -10412,6 +10412,14 @@ PROGRESS Iconst
 		n->pid = $5;
 		n->options = $3;
 		$$ = (Node *) n;
+}
+| PROGRESS VERBOSE '(' progress_option_list ')' Iconst
+	{
+		ProgressStmt *n = makeNode(ProgressStmt);
+
+		n->pid = $6;
+		n->options = lcons(makeDefElem("verbose", NULL, @2), $4);	
+		$$ = (Node *) n;
 };
 
 progress_option_list:

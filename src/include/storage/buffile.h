@@ -35,6 +35,8 @@ struct buffile_state {
 
 	int* bytes_read;
 	int* bytes_write;
+
+	unsigned long disk_size;
 };
 
 /*
@@ -49,5 +51,6 @@ extern int	BufFileSeek(BufFile *file, int fileno, off_t offset, int whence);
 extern void BufFileTell(BufFile *file, int *fileno, off_t *offset);
 extern int	BufFileSeekBlock(BufFile *file, long blknum);
 extern struct buffile_state* BufFileState(BufFile *file);
+extern int BufFileGetDiskSize(BufFile *file);
 
 #endif   /* BUFFILE_H */

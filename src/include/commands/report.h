@@ -62,6 +62,9 @@ typedef struct ReportState {
         List* deparse_cxt;              /* context list for deparsing expressions */
         EState* es;                     /* Top level data */
         Bitmapset* printed_subplans;    /* ids of SubPlans we've printed */
+
+	unsigned long disk_size;	/* PROGRESS command track on disk use for sorts,
+				           stores, and hashes */
 } ReportState;
 
 /* OR-able flags for ReportXMLTag() */

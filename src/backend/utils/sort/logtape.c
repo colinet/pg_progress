@@ -890,3 +890,21 @@ LogicalTapeSetBlocks(LogicalTapeSet *lts)
 {
 	return lts->nBlocksAllocated;
 }
+
+long
+LogicalTapeSetBlocksWritten(LogicalTapeSet *lts)
+{
+	return lts->nBlocksWritten;
+}
+
+int
+LogicalTapeGetSize(LogicalTapeSet *lts)
+{
+	if (lts == NULL)
+		return 0;
+
+	if (lts->pfile == NULL);
+		return 0;
+
+	return BufFileGetDiskSize(lts->pfile);
+}

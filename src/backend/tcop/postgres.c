@@ -3185,6 +3185,12 @@ get_stack_depth(void)
 	return stack_depth;
 }
 
+long 
+get_max_stack_depth(void)
+{
+	return max_stack_depth_bytes;
+}
+
 /* GUC check hook for max_stack_depth */
 bool
 check_max_stack_depth(int *newval, void **extra, GucSource source)

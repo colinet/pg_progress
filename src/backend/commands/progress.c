@@ -127,7 +127,8 @@ static void ProgressModifyTable(ModifyTableState * planstate, ReportState* ps);
 static void ProgressHashJoin(HashJoinState* planstate, ReportState* ps);
 static void ProgressHash(HashState* planstate, ReportState* ps);
 static void ProgressHashJoinTable(HashJoinTable hashtable, ReportState* ps);
-static void ProgressBufFileRW(BufFile* bf, ReportState* ps, unsigned long *reads, unsigned long * writes);
+static void ProgressBufFileRW(BufFile* bf, ReportState* ps, unsigned long *reads,
+	unsigned long * writes, unsigned long *disk_size);
 static void ProgressBufFile(BufFile* bf, ReportState* ps);
 static void ProgressMaterial(MaterialState* planstate, ReportState* ps);
 static void ProgressTupleStore(Tuplestorestate* tss, ReportState* ps);
@@ -140,9 +141,8 @@ extern void ReportText(const char* label, const char* value, ReportState* rpt);
 extern void ReportTextNoNewLine(const char* label, const char* value, ReportState* rpt);
 
 static void ReportTime(QueryDesc* query, ReportState* ps);
-static void ReportStack(QueryDesc* query, ReportState* ps);
-static void ReportRSS(QueryDesc* query, ReportState* ps);
-static void ReportDisk(QueryDesc* query, ReportState* ps);
+static void ReportStack(ReportState* ps);
+static void ReportDisk(ReportState* ps);
 
 
 
@@ -275,7 +275,9 @@ void ProgressSendRequest(
 	buf = palloc0(PROGRESS_AREA_SIZE);
 	MemoryContextSwitchTo(old_context);
 
-	/* Serialize signals/request to get the progress state of the query */
+	/*
+	 * Serialize signals/request to get the progress state of the query
+	 */
 	LWLockAcquire(ProgressLock, LW_EXCLUSIVE);
 
 	req = progress_ctl_array + bid;
@@ -299,7 +301,9 @@ void ProgressSendRequest(
 	}
 	memset(req->buf, 0, PROGRESS_AREA_SIZE);
 
-	/* End serialization */
+	/*
+	 * End serialization
+	 */
 	LWLockRelease(ProgressLock);
 
 	if (did_timeout) {
@@ -329,7 +333,7 @@ static void ProgressGetOptions(ProgressCtl* req, ProgressStmt* stmt, ParseState*
 	/* default options */
 	req->format = REPORT_FORMAT_TEXT;
 	req->verbose = 0;
-	req->inline_output = false;
+	req->inline_output = true;
 
 	/*
 	 * Check for format option
@@ -337,6 +341,7 @@ static void ProgressGetOptions(ProgressCtl* req, ProgressStmt* stmt, ParseState*
 	foreach (lc, stmt->options) {
 		DefElem* opt = (DefElem*) lfirst(lc);
 
+		elog(LOG, "OPTION %s", opt->defname);
 		if (strcmp(opt->defname, "format") == 0) {
 			char* p = defGetString(opt);
 
@@ -443,6 +448,7 @@ void HandleProgressRequest(void)
 	ps->format = req->format;
 	ps->verbose = req->verbose;
 	ps->inline_output = req->inline_output;
+	ps->disk_size = 0;
 	inline_output = ps->inline_output;
 
 	/*
@@ -457,24 +463,19 @@ void HandleProgressRequest(void)
 	} else if (!IsTransactionState()) {
 		ReportText("status", "<out of transaction>", ps);
 	} else if (MyQueryDesc->plannedstmt == NULL) {
-		if (inline_output) {
-			appendStringInfo(ps->str, "status: <NULL planned statement>\n");
-		} else {
-			ReportText("status", "<NULL planned statement>", ps);
-		}
+		ReportText("status", "<NULL planned statement>", ps);
 	} else if (MyQueryDesc->plannedstmt->commandType == CMD_UTILITY) {
-		if (inline_output) {
-			appendStringInfo(ps->str, "status: <utility statement>\n");
-		} else {
-			ReportText("status", "<utility statement>", ps);
-		}
+		ReportText("status", "<utility statement>", ps);
+	} else if (MyQueryDesc->already_executed == false) {
+		ReportText("status", "<query not yet started>", ps);
+	} else if (QueryCancelPending) {
+		ReportText("status", "<query cancel pending>", ps);
+	} else if (RecoveryConflictPending) {
+		ReportText("status", "<recovery conflict pending>", ps);
+	} else if (ProcDiePending) {
+		ReportText("status", "<proc die pending>", ps);
 	} else {
-		if (inline_output) {
-			appendStringInfo(ps->str, "status: <query running>\n");
-		} else {
-			ReportText("status", "<query running>", ps);
-		}
-
+		ReportText("status", "<query running>", ps);
 		running = 1;
 	}
 
@@ -485,10 +486,11 @@ void HandleProgressRequest(void)
 
 	if (running) {
 		ReportTime(MyQueryDesc, ps);
+		if (ps->verbose)
+			ReportStack(ps);
+
 		ProgressPlan(MyQueryDesc, ps);
-		ReportStack(MyQueryDesc, ps);
-		ReportRSS(MyQueryDesc, ps);
-		ReportDisk(MyQueryDesc, ps);
+		ReportDisk(ps); 	/* must come after ProgressPlan() */
 	}
 
 	ReportEndOutput(ps);
@@ -537,12 +539,20 @@ static void ProgressPlan(
 	Assert(query->plannedstmt != NULL);
 
 	/* Top level tree data */
-	ps->plan = query->plannedstmt->planTree;
-	ps->planstate = query->planstate;
-	ps->es = query->estate;
+	if (query->plannedstmt != NULL)
+		ps->pstmt = query->plannedstmt;
 
-	ps->pstmt = query->plannedstmt;
-	ps->rtable = query->plannedstmt->rtable;
+	if (query->plannedstmt->planTree != NULL)
+		ps->plan = query->plannedstmt->planTree;
+
+	if (query->planstate != NULL)
+		ps->planstate = query->planstate;
+
+	if (query->estate != NULL)
+		ps->es = query->estate;
+
+	if (query->plannedstmt->rtable != NULL)
+		ps->rtable = query->plannedstmt->rtable;
 
 	ReportPreScanNode(query->planstate, &rels_used);
 
@@ -589,8 +599,6 @@ static void ProgressNode(
 	if (ret != 0) {
 		elog(LOG, "unknown node type for plan");
 	}
-
-	elog(LOG, "ProgressNode Node = %s, STR = %s", info.pname, ps->str->data);
 
 	ReportOpenGroup("Progress", relationship != NULL ? relationship : "progress", true, ps);
 	ReportProperties(plan, &info, plan_name, relationship, ps);
@@ -1184,8 +1192,10 @@ void ProgressHashJoinTable(HashJoinTable hashtable, ReportState* ps)
 	int i;
 	unsigned long reads;
 	unsigned long writes;
+	unsigned long disk_size;
 	unsigned long lreads;
 	unsigned long lwrites;
+	unsigned long ldisk_size;
 
 	/*
 	 * Could be used but not yet allocated
@@ -1208,25 +1218,36 @@ void ProgressHashJoinTable(HashJoinTable hashtable, ReportState* ps)
 	 */
 	reads = 0;
 	writes = 0;
+	disk_size = 0;
+
 	for (i = 0; i < hashtable->nbatch; i++) {
 		if (hashtable->innerBatchFile[i]) {
-			ProgressBufFileRW(hashtable->innerBatchFile[i], ps, &lreads, &lwrites);
+			ProgressBufFileRW(hashtable->innerBatchFile[i], ps, &lreads, &lwrites, &ldisk_size);
 			reads += lreads;
 			writes += lwrites;
+			disk_size += ldisk_size;
 		}
 
 		if (hashtable->outerBatchFile[i]) {
-			ProgressBufFileRW(hashtable->outerBatchFile[i], ps, &lreads, &lwrites);
+			ProgressBufFileRW(hashtable->outerBatchFile[i], ps, &lreads, &lwrites, &ldisk_size);
 			reads += lreads;
 			writes += lwrites;
+			disk_size += ldisk_size;
 		}
 	}
 
+	/* 
+	 * Update SQL query wide disk use
+  	 */
+	ps->disk_size += disk_size;
+
 	if (inline_output) {
-		appendStringInfo(ps->str, " kbytes r/w %ld/%ld", reads/1024, writes/1024);
+		appendStringInfo(ps->str, " kbytes r/w %ld/%ld, disk use (bytes) %ld",
+			reads/1024, writes/1024, disk_size);
 	} else {
 		ReportPropertyInteger("kbytes read", reads/1024, ps);
-		ReportPropertyIntegerNoNewLine("kbytes write", writes/1024, ps);
+		ReportPropertyInteger("kbytes write", writes/1024, ps);
+		ReportPropertyIntegerNoNewLine("disk use (bytes)", disk_size, ps);
 	}
 
 	/*
@@ -1300,7 +1321,7 @@ void ProgressHashJoinTable(HashJoinTable hashtable, ReportState* ps)
 
 static
 void ProgressBufFileRW(BufFile* bf, ReportState* ps,
-	unsigned long *reads, unsigned long * writes)
+	unsigned long *reads, unsigned long * writes, unsigned long *disk_size)
 {
 	MemoryContext oldcontext;
 	struct buffile_state* bfs;
@@ -1311,11 +1332,14 @@ void ProgressBufFileRW(BufFile* bf, ReportState* ps,
 
 	*reads = 0;
 	*writes = 0;
+	*disk_size = 0;
 
 	oldcontext = MemoryContextSwitchTo(ps->memcontext);
 	bfs = BufFileState(bf);
 	MemoryContextSwitchTo(oldcontext);
-	
+
+	*disk_size = bfs->disk_size;	
+
 	for (i = 0; i < bfs->numFiles; i++) {
 		*reads += bfs->bytes_read[i];
 		*writes += bfs->bytes_write[i];
@@ -1345,18 +1369,27 @@ void ProgressBufFile(BufFile* bf, ReportState* ps)
 
 	if (bfs->numFiles == 0)
 		return;
-	
+
+	if (inline_output) {
+		appendStringInfoSpaces(ps->str, ps->indent);
+		appendStringInfo(ps->str, "disk use (bytes) %ld\n", bfs->disk_size);
+	} else {
+		ReportPropertyLong("disk use (bytes)", bfs->disk_size, ps);
+	}
+
 	for (i = 0; i < bfs->numFiles; i++) {
 		if (inline_output) {
 			appendStringInfoSpaces(ps->str, ps->indent);	
 			appendStringInfo(ps->str, "file %d r/w (kbytes) %d/%d\n", 
 				i, bfs->bytes_read[i]/1024, bfs->bytes_write[i]/1024);
 		} else {
+			ps->indent++;
 			ReportOpenGroup("file", "file", true, ps);
 			ReportPropertyInteger("file", i, ps);
 			ReportPropertyInteger("kbytes read", bfs->bytes_read[i]/1024, ps);
 			ReportPropertyInteger("kbytes write", bfs->bytes_write[i]/1024, ps);	
 			ReportCloseGroup("file", "file", true, ps);
+			ps->indent--;
 		}
 	}	
 
@@ -1465,16 +1498,22 @@ void ProgressTupleStore(Tuplestorestate* tss, ReportState* ps)
 		if (inline_output) {
 			appendStringInfo(ps->str, " read=%ld", (long int) tssr.tuples_read);
 		} else {
-			ReportPropertyIntegerNoNewLine("rows read", (long int) tssr.tuples_read, ps);
+			ReportPropertyInteger("rows read", (long int) tssr.tuples_read, ps);
 		}
 			
 		if (tssr.tuples_deleted) {
-			ReportNewLine(ps);
 			if (inline_output) {
 				appendStringInfo(ps->str, " deleted=%ld", (long int ) tssr.tuples_deleted);
 			} else {
-				ReportPropertyIntegerNoNewLine("rows deleted", (long int ) tssr.tuples_deleted, ps);
+				ReportPropertyInteger("rows deleted", (long int ) tssr.tuples_deleted, ps);
 			}
+		}
+
+		ps->disk_size += tssr.disk_size;
+		if (inline_output) {
+			appendStringInfo(ps->str, " disk use (bytes) %ld", tssr.disk_size);
+		} else {
+			ReportPropertyLongNoNewLine("disk use (bytes)", tssr.disk_size, ps);
 		}
 
 		break;
@@ -1527,7 +1566,7 @@ void ProgressTupleSort(Tuplesortstate* tss, ReportState* ps)
 	case TSS_INITIAL:		/* Loading tuples in mem still within memory limit */
 	case TSS_BOUNDED:		/* Loading tuples in mem into bounded-size heap */
 		if (inline_output) {
-			appendStringInfo(ps->str, " in memory loading tuples %d\n", tsr->memtupcount);			
+			appendStringInfo(ps->str, " in memory loading tuples %d", tsr->memtupcount);			
 		} else {
 			ReportNewLine(ps);
 			ReportText("status", "loading tuples in memory", ps);
@@ -1537,7 +1576,7 @@ void ProgressTupleSort(Tuplesortstate* tss, ReportState* ps)
 
 	case TSS_SORTEDINMEM:		/* Sort completed entirely in memory */
 		if (inline_output) {
-			appendStringInfo(ps->str, " in memory sort completed %d\n", tsr->memtupcount);
+			appendStringInfo(ps->str, " in memory sort completed %d", tsr->memtupcount);
 		} else {
 			ReportNewLine(ps);
 			ReportText("status", "sort completed in memory", ps);
@@ -1628,7 +1667,7 @@ void ProgressTupleSort(Tuplesortstate* tss, ReportState* ps)
 
 	default:
 		if (inline_output) {
-			appendStringInfo(ps->str, "=> unexpected sort state\n");
+			appendStringInfo(ps->str, " => unexpected sort state");
 		} else {
 			ReportNewLine(ps);
 			ReportTextNoNewLine("status", "unexpected sort state", ps);
@@ -1678,8 +1717,8 @@ void dumpTapes(struct ts_report* tsr, ReportState* ps)
 						i, tsr->tp_fib[i], tsr->tp_runs[i], tsr->tp_dummy[i],
 						tsr->tp_read[i], tsr->tp_write[i]);
 				} else {	
-					ReportSeparator("  -> tape ", ps);
 					ReportPropertyInteger("tape idx", i, ps);
+					ps->indent++;
 					if (tsr->tp_fib != NULL)
 						ReportPropertyInteger("fib", tsr->tp_fib[i], ps);
 
@@ -1694,6 +1733,8 @@ void dumpTapes(struct ts_report* tsr, ReportState* ps)
 
 					if (tsr->tp_write)	
 						ReportPropertyInteger("write", tsr->tp_write[i], ps);
+				
+					ps->indent--;
 				}
 			}
 		}
@@ -1711,18 +1752,25 @@ void dumpTapes(struct ts_report* tsr, ReportState* ps)
 		percent_effective = 0;
 
 	if (inline_output) {
-		appendStringInfo(ps->str, " =>  rows r/w merge step %d/%d effective sort %d/%d %d%%",
+		appendStringInfo(ps->str, " =>  rows r/w merge %d/%d sort %d/%d %d%% tape blocks %d",
 			tsr->tp_read_merge, tsr->tp_write_merge,
 			tsr->tp_read_effective, tsr->tp_write_effective,
-			percent_effective);
+			percent_effective, 
+			tsr->blocks_alloc);
 	} else {	
 		ReportNewLine(ps);
 		ReportPropertyInteger("rows merge reads", tsr->tp_read_merge, ps);
 		ReportPropertyInteger("rows merge writes", tsr->tp_write_merge, ps);
 		ReportPropertyInteger("rows effective reads", tsr->tp_read_effective, ps);
 		ReportPropertyInteger("rows effective writes", tsr->tp_write_effective, ps);
-		ReportPropertyIntegerNoNewLine("percent %", percent_effective, ps);
+		ReportPropertyInteger("percent %", percent_effective, ps);
+		ReportPropertyIntegerNoNewLine("tape blocks", tsr->blocks_alloc, ps);
 	}
+
+	/*
+	 * Update total disk size used 
+	 */
+	ps->disk_size += tsr->blocks_alloc * BLCKSZ;
 }
 
 static
@@ -1747,20 +1795,47 @@ void ReportTime(QueryDesc* query, ReportState* ps)
 }
 
 static  
-void ReportStack(QueryDesc* query, ReportState* ps)
+void ReportStack(ReportState* ps)
 {
+	unsigned long depth;
+	unsigned long max_depth;
 
-}
-
-static 
-void ReportRSS(QueryDesc* query , ReportState*  ps)
-{
-
+	depth =	get_stack_depth();
+	max_depth = get_max_stack_depth();
+	if (inline_output) {
+		appendStringInfo(ps->str, "current/max stack depth (bytes) %ld/%ld\n", depth, max_depth); 
+	} else {
+		ReportPropertyLong("current stack depth (bytes)", depth, ps);
+		ReportPropertyLong("max stack depth (bytes)", max_depth, ps);
+	}
 }
 
 static
-void ReportDisk(QueryDesc* query, ReportState*  ps)
+void ReportDisk(ReportState*  ps)
 {
+	unsigned long size;
+	char* unit;
 
+	size = ps->disk_size;
+	
+	if (size < 1024) {
+		unit = "B";
+	} else if (size >= 1024 && size < 1024 * 1024) {
+		unit = "KB";
+		size = size / 1024;
+	} else if (size >= 1024 * 1024 && size < 1024 * 1024 * 1024) {
+		unit = "MB";
+		size = size / (1024 * 1024);
+	} else {
+		unit = "GB";
+		size = size / (1024 * 1024 * 1024);
+	}
+			
+	if (inline_output) {
+		appendStringInfo(ps->str, "total disk space used (%s) %ld\n", unit, size);
+	} else {
+		ReportPropertyText("unit", unit, ps);
+		ReportPropertyLong("total disk space used", size, ps);
+	}
 }
 

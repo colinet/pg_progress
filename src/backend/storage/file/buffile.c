@@ -632,6 +632,7 @@ BufFileTellBlock(BufFile *file)
 
 	blknum = (file->curOffset + file->pos) / BLCKSZ;
 	blknum += file->curFile * BUFFILE_SEG_SIZE;
+
 	return blknum;
 }
 
@@ -647,6 +648,7 @@ struct buffile_state* BufFileState(BufFile *file)
 
 	bfs = (struct buffile_state*) palloc0(sizeof(struct buffile_state));
 	bfs->numFiles = file->numFiles;
+	bfs->disk_size = BufFileGetDiskSize(file);
 
 	bfs->bytes_read = (int*) palloc0(file->numFiles * sizeof(int));
 	bfs->bytes_write = (int*) palloc0(file->numFiles * sizeof(int));
@@ -657,4 +659,28 @@ struct buffile_state* BufFileState(BufFile *file)
 	}
 
 	return bfs;
+}
+
+/*
+ * Report disk use in Bytes
+ */
+int
+BufFileGetDiskSize(BufFile *file)
+{
+	int i;
+	int size;
+
+	if (file == NULL)
+		return 0;
+
+	if (file->numFiles == 0)
+		return 0;
+
+	size = 0;	
+
+	for (i = 0; i < file->numFiles; i++) {
+		size += FileGetSize(file->files[i]);
+	}
+
+	return size;
 }

@@ -91,6 +91,7 @@ struct ts_report {
 	 */
 	int tp_read_merge;
 	int tp_write_merge;
+	int blocks_alloc;
 };
 
 /*

@@ -4525,6 +4525,9 @@ struct ts_report* tuplesort_get_state(Tuplesortstate* tss)
 {
 	int i;
 	struct ts_report* tsr;
+
+	if (tss == NULL)
+		return NULL;
 	
 	tsr = (struct ts_report*) palloc0(sizeof(struct ts_report));
 
@@ -4538,17 +4541,20 @@ struct ts_report* tuplesort_get_state(Tuplesortstate* tss)
 	tsr->activeTapes = tss->activeTapes;
 	tsr->result_tape = tss->result_tape;
 
-	tsr->tp_fib = (int*) palloc0(tsr->maxTapes * sizeof(int));
-	tsr->tp_runs = (int*) palloc0(tsr->maxTapes * sizeof(int));
-	tsr->tp_dummy = (int*) palloc0(tsr->maxTapes * sizeof(int));
-	tsr->tp_read = (int*) palloc0(tsr->maxTapes * sizeof(int));
-	tsr->tp_write = (int*) palloc0(tsr->maxTapes * sizeof(int));
-
 	tsr->tp_read_effective = tss->tp_read_effective;
 	tsr->tp_write_effective = tss->tp_write_effective;
 
 	tsr->tp_read_merge = tss->tp_read_merge;
 	tsr->tp_write_merge = tss->tp_write_merge;
+
+	if (tss->maxTapes == 0)
+		return tsr;
+
+	tsr->tp_fib = (int*) palloc0(tsr->maxTapes * sizeof(int));
+	tsr->tp_runs = (int*) palloc0(tsr->maxTapes * sizeof(int));
+	tsr->tp_dummy = (int*) palloc0(tsr->maxTapes * sizeof(int));
+	tsr->tp_read = (int*) palloc0(tsr->maxTapes * sizeof(int));
+	tsr->tp_write = (int*) palloc0(tsr->maxTapes * sizeof(int));
 
 	for (i = 0; i < tss->maxTapes; i++) {
 		tsr->tp_fib[i] = tss->tp_fib[i];
@@ -4557,6 +4563,11 @@ struct ts_report* tuplesort_get_state(Tuplesortstate* tss)
 		tsr->tp_read[i] = tss->tp_read[i];
 		tsr->tp_write[i] = tss->tp_write[i];
 	}
+
+	if (tss->tapeset == NULL)
+		return tsr;
+
+	tsr->blocks_alloc = LogicalTapeSetBlocks(tss->tapeset);
 
 	return tsr;
 }
