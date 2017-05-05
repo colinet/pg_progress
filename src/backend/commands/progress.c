@@ -17,6 +17,7 @@
 
 #include "nodes/nodes.h"
 #include "tcop/dest.h"
+#include "tcop/pquery.h"
 #include "catalog/pg_type.h"
 #include "nodes/extensible.h"
 #include "nodes/nodeFuncs.h"
@@ -32,9 +33,11 @@
 #include "executor/execdesc.h"
 #include "executor/executor.h"
 #include "executor/hashjoin.h"
+#include "executor/execParallel.h"
 #include "commands/defrem.h"
 #include "commands/report.h"
 #include "access/relscan.h"
+#include "access/parallel.h"
 #include "utils/memutils.h"
 #include "utils/lsyscache.h"
 #include "utils/builtins.h"
@@ -47,7 +50,7 @@
 #include "pgstat.h"
 
 static int log_stmt = 1;		/* log query monitored */
-static int debug = 0;
+static int debug = 1;
 
 bool inline_output;			/* For TEXT output, use inline as much as possible */
 
@@ -60,8 +63,17 @@ bool inline_output;			/* For TEXT output, use inline as much as possible */
  * If this timeout is too long, a cancelled SQL query in a backend could block the monitoring
  * backend too for a longi time.
  */
-unsigned short PROGRESS_TIMEOUT = 5;
+unsigned short PROGRESS_TIMEOUT = 10;
+unsigned short PROGRESS_TIMEOUT_CHILD = 5;
+unsigned short progress_did_timeout = 0;
+char* progress_backend_timeout = "<backend timeout>";
 
+/*
+ * Backend type (single worker, parallel main worker, parallel child worker
+ */
+#define SINGLE_WORKER	0
+#define MAIN_WORKER	1
+#define CHILD_WORKER	2
 
 /*
  * One ProgressCtl is allocated for each backend process which is to be potentially monitored
@@ -83,6 +95,12 @@ typedef struct ProgressCtl {
 	 */
         bool verbose;			/* be verbose */
 	bool inline_output;		/* dense output on one line if possible */
+
+	bool parallel;			/* true if parallel query */
+	bool child;			/* true if child worker */
+	unsigned int child_indent;	/* Indentation for child worker */
+
+	unsigned long disk_size;	/* Disk size in bytes used by the backend for sorts, stores, hashes */
 
 	char* buf;			/* progress status report in shm */
 	struct Latch* latch;		/* Used by requestor to wait for backend to complete its report */
@@ -117,6 +135,8 @@ static void ProgressNode(PlanState* planstate, List* ancestors,
  * - sort data: for any relation or tuplestore
  * Other nodes only wait on above nodes
  */
+static void ProgressGather(GatherState* gs, ReportState* ps);
+static void ProgressGatherMerge(GatherMergeState* gs, ReportState* ps);
 static void ProgressScanBlks(ScanState* ss, ReportState* ps);
 static void ProgressScanRows(Scan* plan, PlanState* plantstate, ReportState* ps);
 static void ProgressTidScan(TidScanState* ts, ReportState* ps);
@@ -208,9 +228,13 @@ void ProgressShmemInit(void)
 			memset(req, 0, sizeof(ProgressCtl));
 	
 			/* set default value */
-			req->format = REPORT_FORMAT_TEXT;	
+			req->format = REPORT_FORMAT_TEXT;
 			req->latch = latch;
 			req->buf = dump_buf_array + i * PROGRESS_AREA_SIZE;
+			req->parallel = false;
+			req->child = false;
+			req->child_indent = 0;
+			req->disk_size = 0;
 			req++;
 			latch++;
 		}
@@ -246,12 +270,10 @@ void ProgressSendRequest(
 	ProgressCtl* req;			// Used for the request
 	TupOutputState* tstate;
 	char* buf;
+	unsigned int buf_len = 0;
 
 	MemoryContext local_context;
 	MemoryContext old_context;
-
-	char* backend_timeout = "<backend timeout>";
-	unsigned short did_timeout = 0;
 
 	/* Convert pid to backend_id */
 	bid = ProcPidGetBackendId(stmt->pid);
@@ -293,12 +315,17 @@ void ProgressSendRequest(
 	/* Fetch result and clear SHM buffer */
 	if (strlen(req->buf) == 0) {
 		/* We have timed out on PROGRESS_TIMEOUT */
-		did_timeout = 1;	
-		memcpy(buf, backend_timeout, strlen(backend_timeout));
+		progress_did_timeout = 1;	
+		memcpy(buf, progress_backend_timeout, strlen(progress_backend_timeout));
 	} else {
 		/* We have a result computed by the monitored backend */
-		memcpy(buf, req->buf, strlen(req->buf));
+		buf_len = strlen(req->buf);
+		memcpy(buf, req->buf, buf_len);
 	}
+
+	/*
+	 * Clear shm buffer
+	 */
 	memset(req->buf, 0, PROGRESS_AREA_SIZE);
 
 	/*
@@ -306,7 +333,7 @@ void ProgressSendRequest(
 	 */
 	LWLockRelease(ProgressLock);
 
-	if (did_timeout) {
+	if (progress_did_timeout) {
 		MemoryContextDelete(local_context);     // pfree(buf);
 		ereport(ERROR, (
 		errcode(ERRCODE_INTERVAL_FIELD_OVERFLOW),
@@ -334,6 +361,9 @@ static void ProgressGetOptions(ProgressCtl* req, ProgressStmt* stmt, ParseState*
 	req->format = REPORT_FORMAT_TEXT;
 	req->verbose = 0;
 	req->inline_output = true;
+	req->parallel = false;
+	req->child = false;
+	req->child_indent = 0;
 
 	/*
 	 * Check for format option
@@ -417,9 +447,9 @@ void HandleProgressRequest(void)
 	ReportState* ps;
 	MemoryContext oldcontext;
 	MemoryContext progress_context;
-	char* shmBufferTooShort = "shm buffer is too small";
-
 	unsigned short running = 0;
+	char* shmBufferTooShort = "shm buffer is too small";
+	bool child = false;
 
 	/*
 	 * We hold interrupt here because the current SQL query could be cancelled at any time. In which 
@@ -446,17 +476,32 @@ void HandleProgressRequest(void)
 	req = progress_ctl_array + MyBackendId;
 
 	ps->format = req->format;
+	ps->parallel = req->parallel;
+
 	ps->verbose = req->verbose;
 	ps->inline_output = req->inline_output;
+	ps->child = req->child;
+	ps->indent = req->child_indent;
 	ps->disk_size = 0;
-	inline_output = ps->inline_output;
+
+	/* Local params */
+	inline_output = req->inline_output;
+	child = req->child;
+
+	if (debug) 
+		elog (LOG, "backend bid=%d pid=%d, format=%d verbose=%d, inline=%d, indent=%d, parallel=%d child=%d",
+			MyBackendId, getpid(), ps->format, ps->verbose, ps->inline_output, ps->indent, req->parallel, req->child);
 
 	/*
 	 * Clear previous content of ps->str
 	 */
 	resetStringInfo(ps->str);
 
-	ReportBeginOutput(ps);
+	/*
+	 * Begin report for single worker and main worker
+	 */
+	if (!child)
+		ReportBeginOutput(ps);
 
 	if (MyQueryDesc == NULL) {
 		ReportText("status", "<idle backend>", ps);
@@ -475,25 +520,32 @@ void HandleProgressRequest(void)
 	} else if (ProcDiePending) {
 		ReportText("status", "<proc die pending>", ps);
 	} else {
-		ReportText("status", "<query running>", ps);
+		if (!child)
+			ReportText("status", "<query running>", ps);
+
 		running = 1;
 	}
 
-	if (log_stmt) {
+	if (log_stmt && !child) {
 		if (MyQueryDesc != NULL && MyQueryDesc->sourceText != NULL)
-			ReportText("query", MyQueryDesc->sourceText, ps);	
+			ReportText("query", MyQueryDesc->sourceText, ps);
 	}
 
 	if (running) {
-		ReportTime(MyQueryDesc, ps);
-		if (ps->verbose)
+		if (!child)
+			ReportTime(MyQueryDesc, ps);
+
+		if (ps->verbose) {
 			ReportStack(ps);
+		}
 
 		ProgressPlan(MyQueryDesc, ps);
-		ReportDisk(ps); 	/* must come after ProgressPlan() */
+		if (!child)
+			ReportDisk(ps); 	/* must come after ProgressPlan() */
 	}
 
-	ReportEndOutput(ps);
+	if (!child)
+		ReportEndOutput(ps);
 
 	/* 
 	 * Dump in SHM the string buffer content
@@ -504,8 +556,10 @@ void HandleProgressRequest(void)
 	} else {
 		memcpy(req->buf, shmBufferTooShort, strlen(shmBufferTooShort));
 		elog(LOG, "Needed size for buffer %d", (int) strlen(ps->str->data));
-		elog(LOG, "Buffer %s", ps->str->data);
 	}
+
+	/* Dump disk size used for stores, sorts, and hashes */
+	req->disk_size = ps->disk_size;
 
 	MemoryContextSwitchTo(oldcontext);
 	MemoryContextDelete(ps->memcontext);
@@ -601,6 +655,16 @@ static void ProgressNode(
 	}
 
 	ReportOpenGroup("Progress", relationship != NULL ? relationship : "progress", true, ps);
+
+	if (ps->parallel && !ps->parallel_reported) {
+		if (ps->child)
+			ReportPropertyInteger("worker child", getpid(), ps);
+		else
+			ReportPropertyInteger("worker parent", getpid(), ps);
+	
+		ps->parallel_reported = true;
+	}
+
 	ReportProperties(plan, &info, plan_name, relationship, ps);
 
 	/*
@@ -788,8 +852,14 @@ static void ProgressNode(
 	case T_Gather:		// PlanState
 		/* 
 		 * Does not store any tuple.
+		 * Used for parallel query
 		 */
+		ProgressGather((GatherState*) planstate, ps);
  		break;
+
+	case T_GatherMerge:	// PlanState
+		ProgressGatherMerge((GatherMergeState*) planstate, ps);
+		break;
 
 	case T_Hash:		// PlanState
 		/* 
@@ -830,7 +900,6 @@ static void ProgressNode(
 	 */
 	haschildren = ReportHasChildren(plan, planstate);
 	if (haschildren) {
-		//ReportOpenGroup("Progress", "children", false, ps);
 		ancestors = lcons(planstate, ancestors);
 	}
 
@@ -935,6 +1004,108 @@ static void ProgressNode(
  * pointers.
  **********************************************************************************/
 
+/*
+ * Deal with worker backends
+ */
+static
+void ProgressGather(GatherState* gs, ReportState* ps)
+{
+	//ParallelContext* pc;
+
+	elog(LOG, "Gather node");
+	//pc = gs->pei->pcxt;
+
+
+	/*
+       		if (backend_type == MAIN_WORKER) {
+			elog(LOG, "Parallel context");
+			buf = palloc0( * PROGRESS_AREA_SIZE);
+			buf_len = 0;
+               		ProgressFetchWorkerState(buf, &buf_len, &progress_did_timeout);
+			if (strlen(buf) > 0) {
+				appendStringInfo(ps->str, buf, buf_len);
+			}	
+		} else {
+			elog(LOG, "Single or child context");
+		}
+	*/
+}
+
+static
+void ProgressGatherMerge(GatherMergeState* gms, ReportState* ps)
+{
+	ParallelContext* pc;
+	int i;
+	int pid;
+	BackendId bid;
+	ProgressCtl* req;			// Used for the request
+	unsigned int shmbuf_len;
+	char* lbuf;
+
+	elog(LOG, "GatherMerge node");
+
+	pc = gms->pei->pcxt;
+	if (pc == NULL) {
+		elog(LOG, "GatherMerge pc is NULL");
+		return;
+	}
+
+	if (debug)
+		elog(LOG, "GatherMerge number of workers launched %d", pc->nworkers_launched); 
+
+	ps->parallel = true;
+	ReportNewLine(ps);
+
+	for (i = 0; i < pc->nworkers_launched; ++i) {
+		pid = pc->worker[i].pid;
+		bid = ProcPidGetBackendId(pid);
+
+		req = progress_ctl_array + bid;
+		req->child = true;
+		req->child_indent = ps->indent;
+		req->parallel = true;
+		req->format = ps->format;
+		req->inline_output = ps->inline_output;
+
+		ps->parallel_reported = false;
+
+		if (debug)
+			elog(LOG, "ProgressFetchWorkerState pid=%d, bid=%d", pid, bid);
+
+		OwnLatch(req->latch);
+		ResetLatch(req->latch);
+
+		SendProcSignal(pid, PROCSIG_PROGRESS, bid);
+		WaitLatch(req->latch, WL_LATCH_SET | WL_TIMEOUT , PROGRESS_TIMEOUT_CHILD * 1000L, WAIT_EVENT_PROGRESS);
+		DisownLatch(req->latch);
+
+		/* Fetch result */
+		shmbuf_len = strlen(req->buf);
+		lbuf  = palloc0(PROGRESS_AREA_SIZE);
+		if (shmbuf_len == 0) {
+			/* We have timed out on PROGRESS_TIMEOUT */
+			if (debug)
+				elog(LOG, "Did a timeout");
+
+			ReportText("status", progress_backend_timeout, ps);
+		} else {
+			/* We have a result computed by the monitored backend */
+			memcpy(lbuf, req->buf, shmbuf_len);
+			memset(req->buf, 0, PROGRESS_AREA_SIZE);
+
+			appendStringInfoString(ps->str, lbuf);
+			ps->disk_size += req->disk_size;
+		}
+
+		pfree(lbuf);
+	}
+
+	/* 
+	 * We already have a new line from the HandleProgressRequest() called by above SendProcSignal() 
+	 * So it is not needed to had one more
+	 */
+	ps->nonewline = true;
+}
 
 /*
  * Monitor progress of commands by page access based on HeapScanDesc

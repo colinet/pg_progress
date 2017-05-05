@@ -39,9 +39,13 @@ typedef struct ReportState {
 	bool costs;
 	bool summary;
 
+	bool child;			/* true if parallel and child backend */
 	bool inline_output;		/* allow dense output. Several fields are
 					   concatened on one line with abbrviations */
+	bool parallel;			/* true if parallel query */
+	bool parallel_reported;		/* true if parallel backends already reported once */
 
+	bool nonewline;			/* true if next node should avoid new line on report */
         /*
          * State for output formating   
          */

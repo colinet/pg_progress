@@ -49,6 +49,7 @@ typedef struct ParallelContext
 extern volatile bool ParallelMessagePending;
 extern int	ParallelWorkerNumber;
 extern bool InitializingParallelWorker;
+extern dlist_head pcxt_list;
 
 #define		IsParallelWorker()		(ParallelWorkerNumber >= 0)
 

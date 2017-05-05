@@ -903,7 +903,7 @@ LogicalTapeGetSize(LogicalTapeSet *lts)
 	if (lts == NULL)
 		return 0;
 
-	if (lts->pfile == NULL);
+	if (lts->pfile == NULL)
 		return 0;
 
 	return BufFileGetDiskSize(lts->pfile);

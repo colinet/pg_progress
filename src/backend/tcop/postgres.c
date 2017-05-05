@@ -162,7 +162,7 @@ static bool EchoQuery = false;	/* -E switch */
 static bool UseSemiNewlineNewline = false;		/* -j switch */
 
 /* whether or not, and why, we were canceled by conflict with recovery */
-static bool RecoveryConflictPending = false;
+bool RecoveryConflictPending = false;
 static bool RecoveryConflictRetryable = true;
 static ProcSignalReason RecoveryConflictReason;
 

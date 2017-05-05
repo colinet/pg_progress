@@ -61,8 +61,12 @@ ReportState* CreateReportState(int needed)
 
 	prg = (ReportState*) palloc0(sizeof(ReportState));
 	prg->format = REPORT_FORMAT_TEXT;   /* default */
+	prg->parallel = false;
+	prg->parallel_reported = false;
+	prg->child = false;
 	prg->str = str;
 	prg->indent = 0;
+	prg->nonewline = false;
 
 	prg->rtable = NULL;
 	prg->plan = NULL;
@@ -2134,9 +2138,11 @@ escape_yaml(StringInfo buf, const char *str)
 void 
 ReportNewLine(ReportState* rpt)
 {
-	if (rpt->format == REPORT_FORMAT_TEXT) {
+	if (rpt->format == REPORT_FORMAT_TEXT && !rpt->nonewline) {
                 appendStringInfoChar(rpt->str, '\n');
         }
+
+	rpt->nonewline = false;
 }
 
 /*
