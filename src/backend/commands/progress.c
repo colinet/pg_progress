@@ -137,12 +137,15 @@ static void ProgressNode(PlanState* planstate, List* ancestors,
  */
 static void ProgressGather(GatherState* gs, ReportState* ps);
 static void ProgressGatherMerge(GatherMergeState* gs, ReportState* ps);
+static void ProgressParallelExecInfo(ParallelContext* pc, ReportState* ps);
+
 static void ProgressScanBlks(ScanState* ss, ReportState* ps);
 static void ProgressScanRows(Scan* plan, PlanState* plantstate, ReportState* ps);
 static void ProgressTidScan(TidScanState* ts, ReportState* ps);
-static void ProgressLimit(LimitState* ls, ReportState* ps);
 static void ProgressCustomScan(CustomScanState* cs, ReportState* ps);
 static void ProgressIndexScan(IndexScanState* is, ReportState* ps); 
+
+static void ProgressLimit(LimitState* ls, ReportState* ps);
 static void ProgressModifyTable(ModifyTableState * planstate, ReportState* ps);
 static void ProgressHashJoin(HashJoinState* planstate, ReportState* ps);
 static void ProgressHash(HashState* planstate, ReportState* ps);
@@ -165,6 +168,8 @@ static void ReportStack(ReportState* ps);
 static void ReportDisk(ReportState* ps);
 
 static void ProgressDumpRequest(ProgressCtl* req);
+static void ProgressResetRequest(ProgressCtl* req);
+
 
 
 Size ProgressShmemSize(void)
@@ -304,6 +309,8 @@ void ProgressSendRequest(
 	LWLockAcquire(ProgressLock, LW_EXCLUSIVE);
 
 	req = progress_ctl_array + bid;
+	ProgressResetRequest(req);
+	ProgressDumpRequest(req);
 	ProgressGetOptions(req, stmt, pstate);
 
 	OwnLatch(req->latch);
@@ -437,13 +444,28 @@ static TupleDesc ProgressResultDesc(
 	return tupdesc;
 }
 
-
 static
 void ProgressDumpRequest(ProgressCtl* req)
 {
 	elog(LOG, "backend bid=%d pid=%d, format=%d verbose=%d, inline=%d, indent=%d, parallel=%d child=%d",
 		MyBackendId, getpid(),
 		req->format, req->verbose, req->inline_output, req->child_indent, req->parallel, req->child);
+}
+
+static
+void ProgressResetRequest(ProgressCtl* req)
+{
+	elog(LOG, "reset progress request at addr %p", req);
+
+	req->format = REPORT_FORMAT_TEXT;
+	req->parallel = false;
+	req->child = false;
+	req->child_indent = 0;
+	req->disk_size = 0;
+	req->inline_output = false;
+
+	InitSharedLatch(req->latch);
+	memset(req->buf, 0, PROGRESS_AREA_SIZE);
 }
 
 void HandleProgressSignal(void)
@@ -1019,31 +1041,24 @@ void ProgressNode(
 static
 void ProgressGather(GatherState* gs, ReportState* ps)
 {
-	//ParallelContext* pc;
+	ParallelContext* pc;
 
-	elog(LOG, "Gather node");
-	//pc = gs->pei->pcxt;
-
-
-	/*
-       		if (backend_type == MAIN_WORKER) {
-			elog(LOG, "Parallel context");
-			buf = palloc0( * PROGRESS_AREA_SIZE);
-			buf_len = 0;
-               		ProgressFetchWorkerState(buf, &buf_len, &progress_did_timeout);
-			if (strlen(buf) > 0) {
-				appendStringInfo(ps->str, buf, buf_len);
-			}	
-		} else {
-			elog(LOG, "Single or child context");
-		}
-	*/
+	pc = gs->pei->pcxt;
+	ProgressParallelExecInfo(pc, ps);
 }
 
 static
 void ProgressGatherMerge(GatherMergeState* gms, ReportState* ps)
 {
 	ParallelContext* pc;
+
+	pc = gms->pei->pcxt;
+	ProgressParallelExecInfo(pc, ps);
+}
+
+static
+void ProgressParallelExecInfo(ParallelContext* pc, ReportState* ps)
+{
 	int i;
 	int pid;
 	BackendId bid;
@@ -1051,16 +1066,16 @@ void ProgressGatherMerge(GatherMergeState* gms, ReportState* ps)
 	unsigned int shmbuf_len;
 	char* lbuf;
 
-	elog(LOG, "GatherMerge node");
+	if (debug)
+		elog(LOG, "ProgressParallelExecInfo node");
 
-	pc = gms->pei->pcxt;
 	if (pc == NULL) {
-		elog(LOG, "GatherMerge pc is NULL");
+		elog(LOG, "ParallelContext is NULL");
 		return;
 	}
 
 	if (debug)
-		elog(LOG, "GatherMerge number of workers launched %d", pc->nworkers_launched); 
+		elog(LOG, "ParallelContext number of workers launched %d", pc->nworkers_launched); 
 
 	ps->parallel = true;
 	ReportNewLine(ps);
@@ -1068,6 +1083,8 @@ void ProgressGatherMerge(GatherMergeState* gms, ReportState* ps)
 	for (i = 0; i < pc->nworkers_launched; ++i) {
 		pid = pc->worker[i].pid;
 		bid = ProcPidGetBackendId(pid);
+		if (bid == InvalidBackendId)
+			continue;
 
 		req = progress_ctl_array + bid;
 		req->child = true;
@@ -1077,9 +1094,6 @@ void ProgressGatherMerge(GatherMergeState* gms, ReportState* ps)
 		req->inline_output = ps->inline_output;
 
 		ps->parallel_reported = false;
-
-		if (debug)
-			elog(LOG, "ProgressFetchWorkerState pid=%d, bid=%d", pid, bid);
 
 		OwnLatch(req->latch);
 		ResetLatch(req->latch);
