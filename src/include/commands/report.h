@@ -86,6 +86,10 @@ extern void ReportCloseGroup(const char *objtype, const char *labelname, bool la
 
 extern void ReportBeginOutput(ReportState *rpt);
 extern void ReportEndOutput(ReportState* rpt);
+
+extern void ReportBeginChildOutput(ReportState *rpt);
+extern void ReportEndChildOutput(ReportState* rpt);
+
 extern void ReportSeparatePlans(ReportState* rpt);
 
 extern void ReportProperty(const char *qlabel, const char *value, bool numeric, ReportState *rpt, bool newline);
@@ -95,11 +99,13 @@ extern void ReportPropertyListNested(const char *qlabel, List *data, ReportState
 extern void ReportPropertyText(const char *qlabel, const char *value, ReportState* rpt);
 extern void ReportPropertyInteger(const char *qlabel, int value, ReportState *rpt);
 extern void ReportPropertyIntegerNoNewLine(const char *qlabel, int value, ReportState *rpt);
-
 extern void ReportPropertyLong(const char *qlabel, long value, ReportState *rpt);
 extern void ReportPropertyLongNoNewLine(const char *qlabel, long value, ReportState *rpt);
 extern void ReportPropertyFloat(const char *qlabel, double value, int ndigits, ReportState *rpt);
 extern void ReportPropertyBool(const char *qlabel, bool value, ReportState *rpt);
+
+extern void ReportText(const char* label, const char* value, ReportState* rpt);
+extern void ReportTextNoNewLine(const char* label, const char* value, ReportState* rpt);
 
 extern void ReportNewLine(ReportState* rpt);
 extern void ReportSpace(ReportState* rpt);

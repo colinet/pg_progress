@@ -1807,6 +1807,21 @@ ReportPropertyBool(const char *qlabel, bool value, ReportState *rpt)
 	ReportProperty(qlabel, value ? "true" : "false", true, rpt, true);
 }
 
+/* 
+ * Report only a text
+ */
+void
+ReportText(const char* label, const char* value, ReportState* rpt)
+{
+        ReportProperty(label, value, false, rpt, true);
+}
+
+void
+ReportTextNoNewLine(const char* label, const char* value, ReportState* rpt)
+{
+        ReportProperty(label, value, false, rpt, false);
+}
+
 /*
  * Open a group of related objects.
  *
@@ -2017,6 +2032,64 @@ ReportEndOutput(ReportState* rpt)
 			break;
 
 		case REPORT_FORMAT_YAML:
+			rpt->grouping_stack = list_delete_first(rpt->grouping_stack);
+			break;
+	}
+}
+
+/*
+ * Emit sub output
+ *
+ * This is just enough different from processing a subgroup that we need
+ * a separate pair of subroutines.
+ */
+void
+ReportBeginChildOutput(ReportState *rpt)
+{
+	switch (rpt->format)
+	{
+		case REPORT_FORMAT_TEXT:
+			/* nothing to do */
+			break;
+
+		case REPORT_FORMAT_XML:
+			break;
+
+		case REPORT_FORMAT_JSON:
+			/* top-level structure is an array of plans */
+			//appendStringInfoChar(rpt->str, '{');
+			rpt->grouping_stack = lcons_int(0, rpt->grouping_stack);
+			break;
+
+		case REPORT_FORMAT_YAML:
+			rpt->grouping_stack = lcons_int(0, rpt->grouping_stack);
+			break;
+	}
+}
+
+/*
+ * Emit the end-of-output boilerplate.
+ */
+void
+ReportEndChildOutput(ReportState* rpt)
+{
+	switch (rpt->format)
+	{
+		case REPORT_FORMAT_TEXT:
+			/* nothing to do */
+			break;
+
+		case REPORT_FORMAT_XML:
+			break;
+
+		case REPORT_FORMAT_JSON:
+			//rpt->indent--;
+			//appendStringInfoString(rpt->str, "\n}");
+			rpt->grouping_stack = list_delete_first(rpt->grouping_stack);
+			break;
+
+		case REPORT_FORMAT_YAML:
+			//rpt->indent--;
 			rpt->grouping_stack = list_delete_first(rpt->grouping_stack);
 			break;
 	}

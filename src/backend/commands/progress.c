@@ -164,6 +164,7 @@ static void ReportTime(QueryDesc* query, ReportState* ps);
 static void ReportStack(ReportState* ps);
 static void ReportDisk(ReportState* ps);
 
+static void ProgressDumpRequest(ProgressCtl* req);
 
 
 Size ProgressShmemSize(void)
@@ -352,7 +353,8 @@ void ProgressSendRequest(
 	MemoryContextDelete(local_context);	// pfree(buf);
 }
 
-static void ProgressGetOptions(ProgressCtl* req, ProgressStmt* stmt, ParseState* pstate)
+static
+void ProgressGetOptions(ProgressCtl* req, ProgressStmt* stmt, ParseState* pstate)
 {
 	unsigned short result_type;
 	ListCell* lc;
@@ -435,6 +437,15 @@ static TupleDesc ProgressResultDesc(
 	return tupdesc;
 }
 
+
+static
+void ProgressDumpRequest(ProgressCtl* req)
+{
+	elog(LOG, "backend bid=%d pid=%d, format=%d verbose=%d, inline=%d, indent=%d, parallel=%d child=%d",
+		MyBackendId, getpid(),
+		req->format, req->verbose, req->inline_output, req->child_indent, req->parallel, req->child);
+}
+
 void HandleProgressSignal(void)
 {
 	progress_requested = true;
@@ -463,7 +474,8 @@ void HandleProgressRequest(void)
 	 */
 	HOLD_INTERRUPTS();
 
-	progress_context =  AllocSetContextCreate(CurrentMemoryContext, "ReportState", ALLOCSET_DEFAULT_SIZES);
+	progress_context =  AllocSetContextCreate(CurrentMemoryContext,
+					"ReportState", ALLOCSET_DEFAULT_SIZES);
 	oldcontext = MemoryContextSwitchTo(progress_context);
 
 	ps = CreateReportState(0);
@@ -488,9 +500,8 @@ void HandleProgressRequest(void)
 	inline_output = req->inline_output;
 	child = req->child;
 
-	if (debug) 
-		elog (LOG, "backend bid=%d pid=%d, format=%d verbose=%d, inline=%d, indent=%d, parallel=%d child=%d",
-			MyBackendId, getpid(), ps->format, ps->verbose, ps->inline_output, ps->indent, req->parallel, req->child);
+	if (debug)
+		ProgressDumpRequest(req);
 
 	/*
 	 * Clear previous content of ps->str
@@ -500,7 +511,9 @@ void HandleProgressRequest(void)
 	/*
 	 * Begin report for single worker and main worker
 	 */
-	if (!child)
+	if (child) 
+		ReportBeginChildOutput(ps);
+	else
 		ReportBeginOutput(ps);
 
 	if (MyQueryDesc == NULL) {
@@ -544,7 +557,9 @@ void HandleProgressRequest(void)
 			ReportDisk(ps); 	/* must come after ProgressPlan() */
 	}
 
-	if (!child)
+	if (child)
+		ReportEndChildOutput(ps);
+	else
 		ReportEndOutput(ps);
 
 	/* 
@@ -568,19 +583,8 @@ void HandleProgressRequest(void)
 	RESUME_INTERRUPTS();
 }
 
-void
-ReportText(const char* label, const char* value, ReportState* rpt)
-{
-	ReportProperty(label, value, false, rpt, true);
-}
-
-void 
-ReportTextNoNewLine(const char* label, const char* value, ReportState* rpt)
-{
-	ReportProperty(label, value, false, rpt, false);
-}
-
-static void ProgressPlan(
+static
+void ProgressPlan(
 	QueryDesc* query,
 	ReportState* ps)
 {
@@ -619,7 +623,12 @@ static void ProgressPlan(
 		planstate = outerPlanState(planstate);
 	}
 
-	ProgressNode(planstate, NIL, NULL, NULL, ps);
+	if (ps->child)
+		ProgressNode(planstate, NIL, "child worker", NULL, ps);
+	else if (ps->parallel)
+		ProgressNode(planstate, NIL, "main worker", NULL, ps);
+	else
+		ProgressNode(planstate, NIL, "single worker", NULL, ps);
 }
 	
 /*
@@ -629,7 +638,8 @@ static void ProgressPlan(
  * relationship: describes the relationship of this plan state to its parent
  * 	"outer", "inner". It is null at tol level.
  */
-static void ProgressNode(
+static
+void ProgressNode(
 	PlanState* planstate,
 	List* ancestors,
 	const char* relationship,
@@ -978,7 +988,6 @@ static void ProgressNode(
 	 */
 	if (haschildren) {
 		ancestors = list_delete_first(ancestors);
-		//ReportCloseGroup("Progress", "children", false, ps);
 	}
 
 	/*
