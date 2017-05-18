@@ -48,6 +48,7 @@
 #include "utils/ruleutils.h"
 #include "miscadmin.h"
 #include "pgstat.h"
+#include "funcapi.h"
 
 static int log_stmt = 1;		/* log query monitored */
 static int debug = 1;
@@ -111,6 +112,40 @@ char* dump_buf_array;			/* SHMEM buffers one for each backend */
 struct Latch* resp_latch_array;		/* Array of MaxBackends latches to synchronize response
 					 * from monitored backend to monitoring backend */
 
+typedef struct ProgressState {
+	bool verbose;           /* be verbose */
+ 
+	bool child;             /* true if parallel and child backend */
+	bool parallel;          /* true if parallel query */
+	bool parallel_reported; /* true if parallel backends already reported once */
+
+	/*
+	 * State for output formating
+	 */
+	StringInfo str;         /* output buffer */
+	int indent;             /* current indentation level */
+	int pid;
+	int lineid;
+
+	List* grouping_stack;   /* format-specific grouping state */
+ 
+	MemoryContext memcontext;
+
+	/*
+	 * State related to current plan/execution tree
+	 */
+	PlannedStmt* pstmt;
+	struct Plan* plan;
+	struct PlanState* planstate;
+	List* rtable;
+	List* rtable_names;
+	List* deparse_cxt;      /* context list for deparsing expressions */
+	EState* es;             /* Top level data */
+	Bitmapset* printed_subplans;    /* ids of SubPlans we've printed */
+
+	unsigned long disk_size;        /* PROGRESS command track on disk use for sorts, stores, and hashes */
+} ProgressState;
+
 /*
  * No progress request unless requested.
  */
@@ -169,6 +204,10 @@ static void ReportDisk(ReportState* ps);
 
 static void ProgressDumpRequest(ProgressCtl* req);
 static void ProgressResetRequest(ProgressCtl* req);
+
+
+static ProgressState* CreateProgressState(void);
+
 
 
 
@@ -260,6 +299,104 @@ void ProgressBackendInit(void)
 void ProgressBackendExit(int code, Datum arg)
 {
 	//FreeReportState(progress_state);
+}
+
+/*
+ * Colums are:
+ *
+ * pid
+ * lineid
+ * indent
+ * property
+ * value
+ * unit
+ */
+#define PG_PROGRESS_COLS	6
+
+Datum pg_progress(PG_FUNCTION_ARGS)
+{
+	int pid;
+	unsigned short verbose;
+	Datum values[PG_PROGRESS_COLS];
+	bool nulls[PG_PROGRESS_COLS];
+	TupleDesc tupdesc;
+	Tuplestorestate* tupstore;
+	ReturnSetInfo* rsinfo;
+	MemoryContext per_query_ctx;
+	MemoryContext oldcontext;
+
+	if (debug)
+		elog(LOG, "Start of pg_progress");
+
+	/*
+	 * pid = 0 means collect progress report for all backends
+	 */
+	pid = PG_ARGISNULL(0) ? 0 : PG_GETARG_INT32(0);
+	verbose = PG_ARGISNULL(0) ? false : PG_GETARG_UINT16(1);
+
+	rsinfo = (ReturnSetInfo*) fcinfo->resultinfo;
+
+	/*
+	 * Build a tuple descriptor for our result type
+	 */
+	if (get_call_result_type(fcinfo, NULL, &tupdesc) != TYPEFUNC_COMPOSITE) {
+		elog(ERROR, "return type must be a row type");
+	}
+
+	per_query_ctx = rsinfo->econtext->ecxt_per_query_memory;
+	oldcontext = MemoryContextSwitchTo(per_query_ctx);
+
+	tupstore = tuplestore_begin_heap(true, false, work_mem);
+	rsinfo->returnMode = SFRM_Materialize;
+	rsinfo->setResult = tupstore;
+	rsinfo->setDesc = tupdesc;
+	MemoryContextSwitchTo(oldcontext);
+
+	MemSet(values, 0, sizeof(values));
+	MemSet(nulls, 0, sizeof(nulls));
+
+	values[0] = Int32GetDatum(pid);
+	values[1] = verbose;
+
+	nulls[0] = false;
+	nulls[1] = false;
+
+	if (debug) {
+		elog(LOG, "v0 = %d n0 = %d", pid, nulls[0]);
+		elog(LOG, "v1 = %d n1 = %d", verbose, nulls[1]);
+	}
+	
+	nulls[2] = true;
+	nulls[3] = true;
+	nulls[4] = true;
+	nulls[5] = true;
+
+	tuplestore_putvalues(tupstore, tupdesc, values, nulls);
+	tuplestore_donestoring(tupstore);
+
+	return (Datum) 0;
+}
+
+static
+ProgressState* CreateProgressState(void)
+{
+	StringInfo str;
+	ProgressState* prg;
+
+	str = makeStringInfo();
+ 
+	prg = (ProgressState*) palloc0(sizeof(ProgressState));
+	prg->parallel = false;
+	prg->parallel_reported = false;
+	prg->child = false;
+	prg->str = str;
+	prg->indent = 0;
+	prg->rtable = NULL;
+	prg->plan = NULL;
+	prg->pid = 0;
+	prg->lineid = 0;
+
+	return prg;
 }
 
 /*
@@ -1189,6 +1326,125 @@ void ProgressScanBlks(ScanState* ss, ReportState* ps)
 		}
 	}
 }
+
+static
+void PrgAppendPropLong(ProgressState* ps, const char* prop, unsigned long value, const char* unit)
+{
+	/*
+	 * Fields are
+	 * pid
+	 * lineid
+	 * name
+	 * value
+	 * unit
+	 */
+	char pid_str[9];
+	char lineid_str[9];
+	char indent_str[9];
+	char value_str[17];
+
+	sprintf(pid_str, "%d", ps->pid);
+	sprintf(lineid_str, "%d", ps->lineid);
+	sprintf(indent_str, "%d", ps->indent);
+	sprintf(value_str, "%lu", value);
+	
+	appendStringInfo(ps->str, "%s|%s|%s|%s|%s|%s|", pid_str, lineid_str, indent_str, prop, value_str, unit);
+	ps->lineid++;
+}
+
+static
+void PrgAppendPropText(ProgressState* ps, const char* prop, const char* value)
+{
+	/*
+	 * Fields are
+	 * pid
+	 * lineid
+	 * name
+	 * value
+	 * unit
+	 */
+	char pid_str[9];
+	char lineid_str[9];
+	char indent_str[9];
+
+	sprintf(pid_str, "%d", ps->pid);
+	sprintf(lineid_str, "%d", ps->lineid);
+	sprintf(indent_str, "%d", ps->indent);
+	
+	appendStringInfo(ps->str, "%s|%s|%s|%s|%s||", pid_str, lineid_str, indent_str, prop, value);
+	ps->lineid++;
+}
+
+static
+void PrgScanBlks(ScanState* ss, ProgressState* ps)
+{
+	HeapScanDesc hsd;
+	ParallelHeapScanDesc phsd;
+	unsigned int nr_blks;
+
+	if (ss == NULL)
+		return;
+
+	hsd = ss->ss_currentScanDesc;
+	if (hsd == NULL) {
+		return;
+	}
+
+	phsd = hsd->rs_parallel;
+	if (hsd->rs_parallel != NULL) {
+		/* Parallel query */
+		if (phsd->phs_nblocks != 0 && phsd->phs_cblock != InvalidBlockNumber) {
+			if (phsd->phs_cblock > phsd->phs_startblock)
+				nr_blks = phsd->phs_cblock - phsd->phs_startblock;
+			else
+				nr_blks = phsd->phs_cblock + phsd->phs_nblocks - phsd->phs_startblock;
+
+			PrgAppendPropLong(ps, "fetched", nr_blks, "blocks");
+			PrgAppendPropLong(ps, "total", phsd->phs_nblocks, "blocks");
+			PrgAppendPropLong(ps, "block", 100 * nr_blks/(phsd->phs_nblocks), "%");
+		}
+	} else {
+		/* Not a parallel query */
+		if (hsd->rs_nblocks != 0 && hsd->rs_cblock != InvalidBlockNumber) {
+			if (hsd->rs_cblock > hsd->rs_startblock)
+				nr_blks = hsd->rs_cblock - hsd->rs_startblock;
+			else
+				nr_blks = hsd->rs_cblock + hsd->rs_nblocks - hsd->rs_startblock;
+
+	
+			PrgAppendPropLong(ps, "fetched", nr_blks, "blocks");
+			PrgAppendPropLong(ps, "total", hsd->rs_nblocks, "blocks");
+			PrgAppendPropLong(ps, "block", 100 * nr_blks/(hsd->rs_nblocks), "%");
+		}
+	}
+}
+
+static 
+void PrgScanRows(Scan* plan, PlanState* planstate, ProgressState* ps)
+{
+	Index rti;
+	RangeTblEntry* rte;
+	char* objectname;
+
+	if (plan == NULL)
+		return;
+
+	if (planstate == NULL)
+		return;
+
+	rti = plan->scanrelid; 
+	rte = rt_fetch(rti, ps->rtable);
+	objectname = get_rel_name(rte->relid);
+
+	if (objectname != NULL) {
+		PrgAppendPropText(ps, "rows scan on", quote_identifier(objectname));
+	}
+	
+	PrgAppendPropLong(ps, "fetched", (unsigned long) planstate->plan_rows, "rows");
+	PrgAppendPropLong(ps, "total", (unsigned long) plan->plan.plan_rows, "rows");
+	PrgAppendPropLong(ps, "rows", (unsigned short) planstate->percent_done, "rows");
+}
+
 
 static
 void ProgressScanRows(Scan* plan, PlanState* planstate, ReportState* ps)
