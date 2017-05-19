@@ -53,8 +53,6 @@
 static int log_stmt = 1;		/* log query monitored */
 static int debug = 1;
 
-bool inline_output;			/* For TEXT output, use inline as much as possible */
-
 /* 
  * Monitoring progress waits 5secs for monitored backend response.
  *
@@ -77,6 +75,11 @@ char* progress_backend_timeout = "<backend timeout>";
 #define CHILD_WORKER	2
 
 /*
+ * Number of colums for pg_progress SQL function
+ */
+#define PG_PROGRESS_COLS	6
+
+/*
  * One ProgressCtl is allocated for each backend process which is to be potentially monitored
  * The array of progress_ctl structures is protected by ProgressLock global lock.
  *
@@ -89,13 +92,7 @@ char* progress_backend_timeout = "<backend timeout>";
  * queue of the LWWlock.
  */
 typedef struct ProgressCtl {
-	ReportFormat format; 		/* format of the progress response to be delivered */
-
-	/*
-	 * options
-	 */
         bool verbose;			/* be verbose */
-	bool inline_output;		/* dense output on one line if possible */
 
 	bool parallel;			/* true if parallel query */
 	bool child;			/* true if child worker */
@@ -151,18 +148,12 @@ typedef struct ProgressState {
  */
 volatile bool progress_requested = false;
 
-/* 
- * get options and tupledesc for result
- */
-static void ProgressGetOptions(ProgressCtl* prg, ProgressStmt* stmt, ParseState* pstate);
-static TupleDesc ProgressResultDesc(ProgressCtl* prg);
-
 /*
  * local functions
  */
-static void ProgressPlan(QueryDesc* query, ReportState* ps);
+static void ProgressPlan(QueryDesc* query, ProgressState* ps);
 static void ProgressNode(PlanState* planstate, List* ancestors,
-	const char* relationship, const char* plan_name, ReportState* ps);
+	const char* relationship, const char* plan_name, ProgressState* ps);
 
 /*
  * Individual nodes of interest are:
@@ -170,44 +161,45 @@ static void ProgressNode(PlanState* planstate, List* ancestors,
  * - sort data: for any relation or tuplestore
  * Other nodes only wait on above nodes
  */
-static void ProgressGather(GatherState* gs, ReportState* ps);
-static void ProgressGatherMerge(GatherMergeState* gs, ReportState* ps);
-static void ProgressParallelExecInfo(ParallelContext* pc, ReportState* ps);
+static void ProgressGather(GatherState* gs, ProgressState* ps);
+static void ProgressGatherMerge(GatherMergeState* gs, ProgressState* ps);
+static void ProgressParallelExecInfo(ParallelContext* pc, ProgressState* ps);
 
-static void ProgressScanBlks(ScanState* ss, ReportState* ps);
-static void ProgressScanRows(Scan* plan, PlanState* plantstate, ReportState* ps);
-static void ProgressTidScan(TidScanState* ts, ReportState* ps);
-static void ProgressCustomScan(CustomScanState* cs, ReportState* ps);
-static void ProgressIndexScan(IndexScanState* is, ReportState* ps); 
+static void ProgressScanBlks(ScanState* ss, ProgressState* ps);
+static void ProgressScanRows(Scan* plan, PlanState* plantstate, ProgressState* ps);
+static void ProgressTidScan(TidScanState* ts, ProgressState* ps);
+static void ProgressCustomScan(CustomScanState* cs, ProgressState* ps);
+static void ProgressIndexScan(IndexScanState* is, ProgressState* ps); 
 
-static void ProgressLimit(LimitState* ls, ReportState* ps);
-static void ProgressModifyTable(ModifyTableState * planstate, ReportState* ps);
-static void ProgressHashJoin(HashJoinState* planstate, ReportState* ps);
-static void ProgressHash(HashState* planstate, ReportState* ps);
-static void ProgressHashJoinTable(HashJoinTable hashtable, ReportState* ps);
-static void ProgressBufFileRW(BufFile* bf, ReportState* ps, unsigned long *reads,
+static void ProgressLimit(LimitState* ls, ProgressState* ps);
+static void ProgressModifyTable(ModifyTableState * planstate, ProgressState* ps);
+static void ProgressHashJoin(HashJoinState* planstate, ProgressState* ps);
+static void ProgressHash(HashState* planstate, ProgressState* ps);
+static void ProgressHashJoinTable(HashJoinTable hashtable, ProgressState* ps);
+static void ProgressBufFileRW(BufFile* bf, ProgressState* ps, unsigned long *reads,
 	unsigned long * writes, unsigned long *disk_size);
-static void ProgressBufFile(BufFile* bf, ReportState* ps);
-static void ProgressMaterial(MaterialState* planstate, ReportState* ps);
-static void ProgressTupleStore(Tuplestorestate* tss, ReportState* ps);
-static void ProgressAgg(AggState* planstate, ReportState* ps);
-static void ProgressSort(SortState* ss, ReportState* ps);
-static void ProgressTupleSort(Tuplesortstate* tss, ReportState* ps); 
-static void dumpTapes(struct ts_report* tsr, ReportState* ps);
+static void ProgressBufFile(BufFile* bf, ProgressState* ps);
+static void ProgressMaterial(MaterialState* planstate, ProgressState* ps);
+static void ProgressTupleStore(Tuplestorestate* tss, ProgressState* ps);
+static void ProgressAgg(AggState* planstate, ProgressState* ps);
+static void ProgressSort(SortState* ss, ProgressState* ps);
+static void ProgressTupleSort(Tuplesortstate* tss, ProgressState* ps); 
+static void dumpTapes(struct ts_report* tsr, ProgressState* ps);
 
 extern void ReportText(const char* label, const char* value, ReportState* rpt);
 extern void ReportTextNoNewLine(const char* label, const char* value, ReportState* rpt);
 
-static void ReportTime(QueryDesc* query, ReportState* ps);
-static void ReportStack(ReportState* ps);
-static void ReportDisk(ReportState* ps);
+static void ReportTime(QueryDesc* query, ProgressState* ps);
+static void ReportStack(ProgressState* ps);
+static void ReportDisk(ProgressState* ps);
 
 static void ProgressDumpRequest(ProgressCtl* req);
 static void ProgressResetRequest(ProgressCtl* req);
 
+static void ProgressPropLong(ProgressState* ps, const char* prop, unsigned long value, const char* unit);
+static void ProgressPropText(ProgressState* ps, const char* prop, const char* value);
 
 static ProgressState* CreateProgressState(void);
-
 
 
 
@@ -273,7 +265,6 @@ void ProgressShmemInit(void)
 			memset(req, 0, sizeof(ProgressCtl));
 	
 			/* set default value */
-			req->format = REPORT_FORMAT_TEXT;
 			req->latch = latch;
 			req->buf = dump_buf_array + i * PROGRESS_AREA_SIZE;
 			req->parallel = false;
@@ -288,42 +279,75 @@ void ProgressShmemInit(void)
 	return;
 }
 
-/*
- * Each backend needs to have its own progress_state
- */
-void ProgressBackendInit(void)
+static
+void ProgressPropLong(ProgressState* ps, const char* prop, unsigned long value, const char* unit)
 {
-	//progress_state = CreateReportState(0);
+	/*
+	 * Fields are: pid, lineid, indent, name, value, unit
+	 */
+	char pid_str[9];
+	char lineid_str[9];
+	char indent_str[9];
+	char value_str[17];
+
+	sprintf(pid_str, "%d", ps->pid);
+	sprintf(lineid_str, "%d", ps->lineid);
+	sprintf(indent_str, "%d", ps->indent);
+	sprintf(value_str, "%lu", value);
+	
+	appendStringInfo(ps->str, "%s|%s|%s|%s|%s|%s|", pid_str, lineid_str, indent_str, prop, value_str, unit);
+	ps->lineid++;
 }
 
-void ProgressBackendExit(int code, Datum arg)
+static
+void ProgressPropText(ProgressState* ps, const char* prop, const char* value)
 {
-	//FreeReportState(progress_state);
+	/*
+	 * Fields are: pid, lineid, indent, name, value, unit
+	 */
+	char pid_str[9];
+	char lineid_str[9];
+	char indent_str[9];
+
+	sprintf(pid_str, "%d", ps->pid);
+	sprintf(lineid_str, "%d", ps->lineid);
+	sprintf(indent_str, "%d", ps->indent);
+	
+	appendStringInfo(ps->str, "%s|%s|%s|%s|%s||", pid_str, lineid_str, indent_str, prop, value);
+	ps->lineid++;
+}
+
+static
+void ProgressResetReport(ProgressState* ps)
+{
+	resetStringInfo(ps->str);
 }
 
 /*
- * Colums are:
- *
- * pid
- * lineid
- * indent
- * property
- * value
- * unit
+ * Colums are: pid, lineid, indent, property, value, unit
  */
-#define PG_PROGRESS_COLS	6
-
 Datum pg_progress(PG_FUNCTION_ARGS)
 {
 	int pid;
+	char* buf;
+
 	unsigned short verbose;
+
 	Datum values[PG_PROGRESS_COLS];
 	bool nulls[PG_PROGRESS_COLS];
 	TupleDesc tupdesc;
 	Tuplestorestate* tupstore;
 	ReturnSetInfo* rsinfo;
+
 	MemoryContext per_query_ctx;
 	MemoryContext oldcontext;
+
+	char pid_str[9];
+	char lineid_str[9];
+	char indent_str[9];
+	char prop_str[256];
+	char value_str[17];
+	char unit_str[9];
 
 	if (debug)
 		elog(LOG, "Start of pg_progress");
@@ -343,60 +367,53 @@ Datum pg_progress(PG_FUNCTION_ARGS)
 		elog(ERROR, "return type must be a row type");
 	}
 
+	/*
+	 * Switch to query memory context
+	 */
 	per_query_ctx = rsinfo->econtext->ecxt_per_query_memory;
 	oldcontext = MemoryContextSwitchTo(per_query_ctx);
+
+	/* Allocate buf for local work */
+	buf = palloc0(PROGRESS_AREA_SIZE);
+	ProgressSendRequest(pid, verbose, buf);
 
 	tupstore = tuplestore_begin_heap(true, false, work_mem);
 	rsinfo->returnMode = SFRM_Materialize;
 	rsinfo->setResult = tupstore;
 	rsinfo->setDesc = tupdesc;
-	MemoryContextSwitchTo(oldcontext);
 
 	MemSet(values, 0, sizeof(values));
 	MemSet(nulls, 0, sizeof(nulls));
 
-	values[0] = Int32GetDatum(pid);
-	values[1] = verbose;
+	while (sscanf(buf, "%9[^|],%9[^|],%9[^|],%256[^|],%17[^|],%9[^|]",
+		pid_str, lineid_str, indent_str, prop_str, value_str, unit_str) != EOF) {
+		values[0] = CStringGetDatum(pid_str);
+		nulls[0] = false;
 
-	nulls[0] = false;
-	nulls[1] = false;
+		values[1] = CStringGetDatum(lineid_str);
+		nulls[1] = false;
 
-	if (debug) {
-		elog(LOG, "v0 = %d n0 = %d", pid, nulls[0]);
-		elog(LOG, "v1 = %d n1 = %d", verbose, nulls[1]);
+		values[2] = CStringGetDatum(indent_str);
+		nulls[2] = false;
+
+		values[3] = CStringGetDatum(prop_str);
+		nulls[3] = false;
+
+		values[4] = CStringGetDatum(value_str);
+		nulls[4] = false;
+
+		values[5] = CStringGetDatum(unit_str);
+		nulls[5] = false;
+
+		tuplestore_putvalues(tupstore, tupdesc, values, nulls);
 	}
 	
-	nulls[2] = true;
-	nulls[3] = true;
-	nulls[4] = true;
-	nulls[5] = true;
-
-	tuplestore_putvalues(tupstore, tupdesc, values, nulls);
 	tuplestore_donestoring(tupstore);
 
+	pfree(buf);
+	MemoryContextSwitchTo(oldcontext);
+
 	return (Datum) 0;
-}
-
-static
-ProgressState* CreateProgressState(void)
-{
-	StringInfo str;
-	ProgressState* prg;
-
-	str = makeStringInfo();
- 
-	prg = (ProgressState*) palloc0(sizeof(ProgressState));
-	prg->parallel = false;
-	prg->parallel_reported = false;
-	prg->child = false;
-	prg->str = str;
-	prg->indent = 0;
-	prg->rtable = NULL;
-	prg->plan = NULL;
-	prg->pid = 0;
-	prg->lineid = 0;
-
-	return prg;
 }
 
 /*
@@ -404,41 +421,25 @@ ProgressState* CreateProgressState(void)
  * 	Log a request to a backend in order to fetch its progress log
  *	This is initaited by the SQL command: PROGRESS pid.
  */
-void ProgressSendRequest(
-	ParseState* pstate,
-	ProgressStmt *stmt,
-	DestReceiver* dest)
+void ProgressSendRequest(int pid, int verbose, char* buf)
 {
 	BackendId bid;
 	ProgressCtl* req;			// Used for the request
-	TupOutputState* tstate;
-	char* buf;
 	unsigned int buf_len = 0;
 
-	MemoryContext local_context;
-	MemoryContext old_context;
-
 	/* Convert pid to backend_id */
-	bid = ProcPidGetBackendId(stmt->pid);
+	bid = ProcPidGetBackendId(pid);
 	if (bid == InvalidBackendId) {
 		ereport(ERROR, (
        		errcode(ERRCODE_INTERVAL_FIELD_OVERFLOW),
 		errmsg("Invalid backend process pid")));
 	}
 
-	if (stmt->pid == getpid()) {
+	if (pid == getpid()) {
 		ereport(ERROR, (
 		errcode(ERRCODE_INTERVAL_FIELD_OVERFLOW),
 		errmsg("Cannot request status from self")));
 	}
-
-	/* Collect progress state from monitored backend str data */
-	local_context =  AllocSetContextCreate(CurrentMemoryContext, "ProgressState", ALLOCSET_DEFAULT_SIZES);
-	old_context = MemoryContextSwitchTo(local_context);
-
-	/* Allocate buf for local work */
-	buf = palloc0(PROGRESS_AREA_SIZE);
-	MemoryContextSwitchTo(old_context);
 
 	/*
 	 * Serialize signals/request to get the progress state of the query
@@ -447,13 +448,13 @@ void ProgressSendRequest(
 
 	req = progress_ctl_array + bid;
 	ProgressResetRequest(req);
+	req->verbose = verbose;
 	ProgressDumpRequest(req);
-	ProgressGetOptions(req, stmt, pstate);
 
 	OwnLatch(req->latch);
 	ResetLatch(req->latch);
 
-	SendProcSignal(stmt->pid, PROCSIG_PROGRESS, bid);
+	SendProcSignal(pid, PROCSIG_PROGRESS, bid);
 	WaitLatch(req->latch, WL_LATCH_SET | WL_TIMEOUT , PROGRESS_TIMEOUT * 1000L, WAIT_EVENT_PROGRESS);
 	DisownLatch(req->latch);
 
@@ -479,114 +480,39 @@ void ProgressSendRequest(
 	LWLockRelease(ProgressLock);
 
 	if (progress_did_timeout) {
-		MemoryContextDelete(local_context);     // pfree(buf);
 		ereport(ERROR, (
 		errcode(ERRCODE_INTERVAL_FIELD_OVERFLOW),
 		errmsg("timeout to get response")));
 	}
-
-	/* Send response to client */
-	tstate = begin_tup_output_tupdesc(dest, ProgressResultDesc(req));
-	if (req->format == REPORT_FORMAT_TEXT)
-		do_text_output_multiline(tstate, buf);
-	else
-		do_text_output_oneline(tstate, buf);
-
-	end_tup_output(tstate);
-
-	MemoryContextDelete(local_context);	// pfree(buf);
 }
 
 static
-void ProgressGetOptions(ProgressCtl* req, ProgressStmt* stmt, ParseState* pstate)
+ProgressState* CreateProgressState(void)
 {
-	unsigned short result_type;
-	ListCell* lc;
+	StringInfo str;
+	ProgressState* prg;
 
-	/* default options */
-	req->format = REPORT_FORMAT_TEXT;
-	req->verbose = 0;
-	req->inline_output = true;
-	req->parallel = false;
-	req->child = false;
-	req->child_indent = 0;
+	str = makeStringInfo();
+ 
+	prg = (ProgressState*) palloc0(sizeof(ProgressState));
+	prg->parallel = false;
+	prg->parallel_reported = false;
+	prg->child = false;
+	prg->str = str;
+	prg->indent = 0;
+	prg->rtable = NULL;
+	prg->plan = NULL;
+	prg->pid = 0;
+	prg->lineid = 0;
 
-	/*
-	 * Check for format option
-	 */
-	foreach (lc, stmt->options) {
-		DefElem* opt = (DefElem*) lfirst(lc);
-
-		elog(LOG, "OPTION %s", opt->defname);
-		if (strcmp(opt->defname, "format") == 0) {
-			char* p = defGetString(opt);
-
-			if (strcmp(p, "xml") == 0) {
-				result_type = REPORT_FORMAT_XML;
-				inline_output = false;
-			} else if (strcmp(p, "json") == 0) {
-				result_type = REPORT_FORMAT_JSON;
-				inline_output = false;
-			} else if (strcmp(p, "yaml") == 0) {
-				result_type = REPORT_FORMAT_YAML;
-				inline_output = false;
-			} else if (strcmp(p, "text") == 0) {
-				result_type = REPORT_FORMAT_TEXT;
-				inline_output = false;
-			} else if (strcmp(p, "inline") == 0) {
-				result_type = REPORT_FORMAT_TEXT;
-				inline_output = true;
-			} else {
-				ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-					errmsg("unrecognized value for PROGRESS option \"%s\": \"%s\"",
-					opt->defname, p), parser_errposition(pstate, opt->location)));
-			}
-
-			req->format = result_type;
-			req->inline_output = inline_output;
-		} else if (strcmp(opt->defname, "verbose") == 0) {
-			req->verbose = defGetBoolean(opt);
-		} else {
-			ereport(ERROR, (errcode(ERRCODE_SYNTAX_ERROR),
-				errmsg("unrecognized PROGRESS option \"%s\"", opt->defname),
-					parser_errposition(pstate, opt->location)));
-		}
-	}
-}
-
-static TupleDesc ProgressResultDesc(
-	ProgressCtl* prg)
-{
-	TupleDesc tupdesc;
-	Oid result_type = TEXTOID;
-
-	switch(prg->format) {
-	case REPORT_FORMAT_XML:
-		result_type = XMLOID;
-		break;
-	case REPORT_FORMAT_JSON:
-		result_type = JSONOID;
-		break;
-	default:
-		result_type = TEXTOID;
-		/* No YAMLOID */
-	}
-
-	/*
-	 * Need a tuple descriptor representing a single TEXT or XML column
-	 */
-	tupdesc = CreateTemplateTupleDesc(1, false);
-	TupleDescInitEntry(tupdesc, (AttrNumber) 1, "PLAN PROGRESS", (Oid) result_type, -1, 0);
-
-	return tupdesc;
+	return prg;
 }
 
 static
 void ProgressDumpRequest(ProgressCtl* req)
 {
-	elog(LOG, "backend bid=%d pid=%d, format=%d verbose=%d, inline=%d, indent=%d, parallel=%d child=%d",
-		MyBackendId, getpid(),
-		req->format, req->verbose, req->inline_output, req->child_indent, req->parallel, req->child);
+	elog(LOG, "backend bid=%d pid=%d, verbose=%d, indent=%d, parallel=%d child=%d",
+		MyBackendId, getpid(), req->verbose, req->child_indent, req->parallel, req->child);
 }
 
 static
@@ -594,12 +520,10 @@ void ProgressResetRequest(ProgressCtl* req)
 {
 	elog(LOG, "reset progress request at addr %p", req);
 
-	req->format = REPORT_FORMAT_TEXT;
 	req->parallel = false;
 	req->child = false;
 	req->child_indent = 0;
 	req->disk_size = 0;
-	req->inline_output = false;
 
 	InitSharedLatch(req->latch);
 	memset(req->buf, 0, PROGRESS_AREA_SIZE);
@@ -614,9 +538,11 @@ void HandleProgressSignal(void)
 void HandleProgressRequest(void)
 {
 	ProgressCtl* req;
-	ReportState* ps;
+	ProgressState* ps;
+
 	MemoryContext oldcontext;
 	MemoryContext progress_context;
+
 	unsigned short running = 0;
 	char* shmBufferTooShort = "shm buffer is too small";
 	bool child = false;
@@ -633,11 +559,10 @@ void HandleProgressRequest(void)
 	 */
 	HOLD_INTERRUPTS();
 
-	progress_context =  AllocSetContextCreate(CurrentMemoryContext,
-					"ReportState", ALLOCSET_DEFAULT_SIZES);
+	progress_context =  AllocSetContextCreate(CurrentMemoryContext, "ProgressState", ALLOCSET_DEFAULT_SIZES);
 	oldcontext = MemoryContextSwitchTo(progress_context);
 
-	ps = CreateReportState(0);
+	ps = CreateProgressState();
 	ps->memcontext = progress_context;
 
 	Assert(ps != NULL);
@@ -646,17 +571,13 @@ void HandleProgressRequest(void)
 
 	req = progress_ctl_array + MyBackendId;
 
-	ps->format = req->format;
 	ps->parallel = req->parallel;
-
 	ps->verbose = req->verbose;
-	ps->inline_output = req->inline_output;
 	ps->child = req->child;
 	ps->indent = req->child_indent;
 	ps->disk_size = 0;
 
 	/* Local params */
-	inline_output = req->inline_output;
 	child = req->child;
 
 	if (debug)
@@ -665,42 +586,34 @@ void HandleProgressRequest(void)
 	/*
 	 * Clear previous content of ps->str
 	 */
-	resetStringInfo(ps->str);
-
-	/*
-	 * Begin report for single worker and main worker
-	 */
-	if (child) 
-		ReportBeginChildOutput(ps);
-	else
-		ReportBeginOutput(ps);
+	ProgressResetReport(ps);
 
 	if (MyQueryDesc == NULL) {
-		ReportText("status", "<idle backend>", ps);
+		ProgressPropText(ps, "status", "<idle backend>");
 	} else if (!IsTransactionState()) {
-		ReportText("status", "<out of transaction>", ps);
+		ProgressPropText(ps, "status", "<out of transaction>");
 	} else if (MyQueryDesc->plannedstmt == NULL) {
-		ReportText("status", "<NULL planned statement>", ps);
+		ProgressPropText(ps, "status", "<NULL planned statement>");
 	} else if (MyQueryDesc->plannedstmt->commandType == CMD_UTILITY) {
-		ReportText("status", "<utility statement>", ps);
+		ProgressPropText(ps, "status", "<utility statement>");
 	} else if (MyQueryDesc->already_executed == false) {
-		ReportText("status", "<query not yet started>", ps);
+		ProgressPropText(ps, "status", "<query not yet started>");
 	} else if (QueryCancelPending) {
-		ReportText("status", "<query cancel pending>", ps);
+		ProgressPropText(ps, "status", "<query cancel pending>");
 	} else if (RecoveryConflictPending) {
-		ReportText("status", "<recovery conflict pending>", ps);
+		ProgressPropText(ps, "status", "<recovery conflict pending>");
 	} else if (ProcDiePending) {
-		ReportText("status", "<proc die pending>", ps);
+		ProgressPropText(ps, "status", "<proc die pending>");
 	} else {
 		if (!child)
-			ReportText("status", "<query running>", ps);
+			ProgressPropText(ps, "status", "<query running>");
 
 		running = 1;
 	}
 
 	if (log_stmt && !child) {
 		if (MyQueryDesc != NULL && MyQueryDesc->sourceText != NULL)
-			ReportText("query", MyQueryDesc->sourceText, ps);
+			ProgressPropText(ps, "query", MyQueryDesc->sourceText);
 	}
 
 	if (running) {
@@ -715,11 +628,6 @@ void HandleProgressRequest(void)
 		if (!child)
 			ReportDisk(ps); 	/* must come after ProgressPlan() */
 	}
-
-	if (child)
-		ReportEndChildOutput(ps);
-	else
-		ReportEndOutput(ps);
 
 	/* 
 	 * Dump in SHM the string buffer content
@@ -745,13 +653,13 @@ void HandleProgressRequest(void)
 static
 void ProgressPlan(
 	QueryDesc* query,
-	ReportState* ps)
+	ProgressState* ps)
 {
 	Bitmapset* rels_used = NULL;
 	PlanState* planstate;
 
 	/*
-	 * Set up ReportState fields associated with this plan tree
+	 * Set up ProgressState fields associated with this plan tree
 	 */
 	Assert(query->plannedstmt != NULL);
 
@@ -803,7 +711,7 @@ void ProgressNode(
 	List* ancestors,
 	const char* relationship,
 	const char* plan_name,
-	ReportState* ps)
+	ProgressState* ps)
 {
 	Plan* plan = planstate->plan;
 	PlanInfo info;
@@ -823,19 +731,27 @@ void ProgressNode(
 		elog(LOG, "unknown node type for plan");
 	}
 
-	ReportOpenGroup("Progress", relationship != NULL ? relationship : "progress", true, ps);
+	ProgressPropText(ps, "node", relationship != NULL ? relationship : "progress");
 
 	if (ps->parallel && !ps->parallel_reported) {
 		if (ps->child)
-			ReportPropertyInteger("worker child", getpid(), ps);
+			ProgressPropLong(ps, "worker child", getpid(), "");
 		else
-			ReportPropertyInteger("worker parent", getpid(), ps);
+			ProgressPropLong(ps, "worker parent", getpid(), "");
 	
 		ps->parallel_reported = true;
 	}
 
-	ReportProperties(plan, &info, plan_name, relationship, ps);
+	/*
+	 * Report node top properties
+	 */
+	ProgressPropText(ps, "node name", info.pname);
+	if (plan_name)
+		ProgressPropText(ps, "plan name", plan_name);
 
+	if (plan->parallel_aware)
+		ProgressPropText(ps, "node mode", "parallel");
+                 
 	/*
 	 * Second step
 	 */
@@ -924,19 +840,7 @@ void ProgressNode(
 			break;
 		}
 
-		if (ps->format == REPORT_FORMAT_TEXT) {
-			/*
-			 * For historical reasons, the join type is interpolated
-			 * into the node type name...
-			 */
-			if (((Join*) plan)->jointype != JOIN_INNER) {
-				appendStringInfo(ps->str, " %s Join", jointype);
-			} else if (!IsA(plan, NestLoop)) {
-				appendStringInfoString(ps->str, " Join");
-			}
-		} else {
-			ReportPropertyText("Join Type", jointype, ps);
-		}
+		ProgressPropText(ps, "join type", jointype);
 
 		}
 
@@ -971,12 +875,7 @@ void ProgressNode(
 			break;
 		}
 
-		if (ps->format == REPORT_FORMAT_TEXT) {
-			appendStringInfo(ps->str, " %s", setopcmd);
-		} else {
-			ReportNewLine(ps);
-			ReportPropertyText("Command", setopcmd, ps);
-		}
+		ProgressPropText(ps, "command", setopcmd);
 
 		}
 		break;
@@ -1048,20 +947,15 @@ void ProgressNode(
 	}
 
 	/*
-	 * In text format, first line ends here
-	 */
-	ReportNewLine(ps);
-	
-	/*
 	 * Target list
 	 */
-        if (ps->verbose)
-                show_plan_tlist(planstate, ancestors, ps);
+        //if (ps->verbose)
+        //       show_plan_tlist(planstate, ancestors, ps);
 
 	/*
 	 * Controls (sort, qual, ...) 
 	 */
-	show_control_qual(planstate, ancestors, ps);
+	//show_control_qual(planstate, ancestors, ps);
 
 	/*
 	 * Get ready to display the child plans.
@@ -1075,9 +969,9 @@ void ProgressNode(
 	/*
 	 * initPlan-s
 	 */
-	if (planstate->initPlan) {
-		ReportSubPlans(planstate->initPlan, ancestors, "InitPlan", ps, ProgressNode);
-	}
+	//if (planstate->initPlan) {
+	//		ReportSubPlans(planstate->initPlan, ancestors, "InitPlan", ps, ProgressNode);
+	//	}
 
 	/*
 	 * lefttree
@@ -1096,6 +990,7 @@ void ProgressNode(
 	/*
 	 * special child plans
 	 */
+/*
 	switch (nodeTag(plan)) {
 	case T_ModifyTable:
 		ReportMemberNodes(((ModifyTable*) plan)->plans,
@@ -1134,13 +1029,14 @@ void ProgressNode(
 	default:
 		break;
 	}
+*/
 
 	/*
 	 * subPlan-s
 	 */
-	if (planstate->subPlan) {
-		ReportSubPlans(planstate->subPlan, ancestors, "SubPlan", ps, ProgressNode);
-	}
+//	if (planstate->subPlan) {
+//		ReportSubPlans(planstate->subPlan, ancestors, "SubPlan", ps, ProgressNode);
+//	}
 
 	/*
 	 * end of child plans
@@ -1152,11 +1048,7 @@ void ProgressNode(
 	/*
 	 * in text format, undo whatever indentation we added
 	 */
-	if (ps->format == REPORT_FORMAT_TEXT) {
-		ps->indent = save_indent;
-	}
-	
-	ReportCloseGroup("Progress", relationship != NULL ? relationship : "progress", true, ps);
+	ps->indent = save_indent;
 }
 
 
@@ -1167,7 +1059,7 @@ void ProgressNode(
  * For each of theses function, we need to be paranoiac because the execution tree
  * and plan tree can be in any state. Which means, that any pointer may be NULL.
  *
- * Only ReportState data is reliable. Pointers about ReportState data can be reference
+ * Only ProgressState data is reliable. Pointers about ProgressState data can be reference
  * without checking pointers values. All other data must be checked against NULL 
  * pointers.
  **********************************************************************************/
@@ -1176,7 +1068,7 @@ void ProgressNode(
  * Deal with worker backends
  */
 static
-void ProgressGather(GatherState* gs, ReportState* ps)
+void ProgressGather(GatherState* gs, ProgressState* ps)
 {
 	ParallelContext* pc;
 
@@ -1185,7 +1077,7 @@ void ProgressGather(GatherState* gs, ReportState* ps)
 }
 
 static
-void ProgressGatherMerge(GatherMergeState* gms, ReportState* ps)
+void ProgressGatherMerge(GatherMergeState* gms, ProgressState* ps)
 {
 	ParallelContext* pc;
 
@@ -1194,7 +1086,7 @@ void ProgressGatherMerge(GatherMergeState* gms, ReportState* ps)
 }
 
 static
-void ProgressParallelExecInfo(ParallelContext* pc, ReportState* ps)
+void ProgressParallelExecInfo(ParallelContext* pc, ProgressState* ps)
 {
 	int i;
 	int pid;
@@ -1215,7 +1107,6 @@ void ProgressParallelExecInfo(ParallelContext* pc, ReportState* ps)
 		elog(LOG, "ParallelContext number of workers launched %d", pc->nworkers_launched); 
 
 	ps->parallel = true;
-	ReportNewLine(ps);
 
 	for (i = 0; i < pc->nworkers_launched; ++i) {
 		pid = pc->worker[i].pid;
@@ -1227,8 +1118,6 @@ void ProgressParallelExecInfo(ParallelContext* pc, ReportState* ps)
 		req->child = true;
 		req->child_indent = ps->indent;
 		req->parallel = true;
-		req->format = ps->format;
-		req->inline_output = ps->inline_output;
 
 		ps->parallel_reported = false;
 
@@ -1247,7 +1136,7 @@ void ProgressParallelExecInfo(ParallelContext* pc, ReportState* ps)
 			if (debug)
 				elog(LOG, "Did a timeout");
 
-			ReportText("status", progress_backend_timeout, ps);
+			ProgressPropText(ps, "status", progress_backend_timeout);
 		} else {
 			/* We have a result computed by the monitored backend */
 			memcpy(lbuf, req->buf, shmbuf_len);
@@ -1259,19 +1148,10 @@ void ProgressParallelExecInfo(ParallelContext* pc, ReportState* ps)
 
 		pfree(lbuf);
 	}
-
-	/* 
-	 * We already have a new line from the HandleProgressRequest() called by above SendProcSignal() 
-	 * So it is not needed to had one more
-	 */
-	ps->nonewline = true;
 }
 
-/*
- * Monitor progress of commands by page access based on HeapScanDesc
- */
 static
-void ProgressScanBlks(ScanState* ss, ReportState* ps)
+void ProgressScanBlks(ScanState* ss, ProgressState* ps)
 {
 	HeapScanDesc hsd;
 	ParallelHeapScanDesc phsd;
@@ -1294,114 +1174,9 @@ void ProgressScanBlks(ScanState* ss, ReportState* ps)
 			else
 				nr_blks = phsd->phs_cblock + phsd->phs_nblocks - phsd->phs_startblock;
 
-			if (inline_output) {
-				appendStringInfo(ps->str, " => blks %u/%u %u%%", nr_blks,
-					phsd->phs_nblocks, 100 * nr_blks / (phsd->phs_nblocks));
-			} else {
-				ReportNewLine(ps);
-				ReportPropertyLong("blocks fetched", nr_blks, ps);
-				ReportPropertyLong("blocks total", phsd->phs_nblocks, ps);
-				ReportPropertyIntegerNoNewLine("blocks percent",
-					100 * nr_blks/(phsd->phs_nblocks), ps);
-			}
-		}
-	} else {
-		/* Not a parallel query */
-		if (hsd->rs_nblocks != 0 && hsd->rs_cblock != InvalidBlockNumber) {
-			if (hsd->rs_cblock > hsd->rs_startblock)
-				nr_blks = hsd->rs_cblock - hsd->rs_startblock;
-			else
-				nr_blks = hsd->rs_cblock + hsd->rs_nblocks - hsd->rs_startblock;
-
-			if (inline_output) {
-				appendStringInfo(ps->str, " => blks %u/%u %u%%", nr_blks,
-					hsd->rs_nblocks, 100 * nr_blks / (hsd->rs_nblocks));
-			} else {
-				ReportNewLine(ps);
-				ReportPropertyLong("blocks fetched", nr_blks, ps);
-				ReportPropertyLong("blocks total", hsd->rs_nblocks, ps);
-				ReportPropertyIntegerNoNewLine("blocks percent",
-					100 * nr_blks/(hsd->rs_nblocks), ps);
-			}
-		}
-	}
-}
-
-static
-void PrgAppendPropLong(ProgressState* ps, const char* prop, unsigned long value, const char* unit)
-{
-	/*
-	 * Fields are
-	 * pid
-	 * lineid
-	 * name
-	 * value
-	 * unit
-	 */
-	char pid_str[9];
-	char lineid_str[9];
-	char indent_str[9];
-	char value_str[17];
-
-	sprintf(pid_str, "%d", ps->pid);
-	sprintf(lineid_str, "%d", ps->lineid);
-	sprintf(indent_str, "%d", ps->indent);
-	sprintf(value_str, "%lu", value);
-	
-	appendStringInfo(ps->str, "%s|%s|%s|%s|%s|%s|", pid_str, lineid_str, indent_str, prop, value_str, unit);
-	ps->lineid++;
-}
-
-static
-void PrgAppendPropText(ProgressState* ps, const char* prop, const char* value)
-{
-	/*
-	 * Fields are
-	 * pid
-	 * lineid
-	 * name
-	 * value
-	 * unit
-	 */
-	char pid_str[9];
-	char lineid_str[9];
-	char indent_str[9];
-
-	sprintf(pid_str, "%d", ps->pid);
-	sprintf(lineid_str, "%d", ps->lineid);
-	sprintf(indent_str, "%d", ps->indent);
-	
-	appendStringInfo(ps->str, "%s|%s|%s|%s|%s||", pid_str, lineid_str, indent_str, prop, value);
-	ps->lineid++;
-}
-
-static
-void PrgScanBlks(ScanState* ss, ProgressState* ps)
-{
-	HeapScanDesc hsd;
-	ParallelHeapScanDesc phsd;
-	unsigned int nr_blks;
-
-	if (ss == NULL)
-		return;
-
-	hsd = ss->ss_currentScanDesc;
-	if (hsd == NULL) {
-		return;
-	}
-
-	phsd = hsd->rs_parallel;
-	if (hsd->rs_parallel != NULL) {
-		/* Parallel query */
-		if (phsd->phs_nblocks != 0 && phsd->phs_cblock != InvalidBlockNumber) {
-			if (phsd->phs_cblock > phsd->phs_startblock)
-				nr_blks = phsd->phs_cblock - phsd->phs_startblock;
-			else
-				nr_blks = phsd->phs_cblock + phsd->phs_nblocks - phsd->phs_startblock;
-
-			PrgAppendPropLong(ps, "fetched", nr_blks, "blocks");
-			PrgAppendPropLong(ps, "total", phsd->phs_nblocks, "blocks");
-			PrgAppendPropLong(ps, "block", 100 * nr_blks/(phsd->phs_nblocks), "%");
+			ProgressPropLong(ps, "fetched", nr_blks, "blocks");
+			ProgressPropLong(ps, "total", phsd->phs_nblocks, "blocks");
+			ProgressPropLong(ps, "block", 100 * nr_blks/(phsd->phs_nblocks), "%");
 		}
 	} else {
 		/* Not a parallel query */
@@ -1412,15 +1187,15 @@ void PrgScanBlks(ScanState* ss, ProgressState* ps)
 				nr_blks = hsd->rs_cblock + hsd->rs_nblocks - hsd->rs_startblock;
 
 	
-			PrgAppendPropLong(ps, "fetched", nr_blks, "blocks");
-			PrgAppendPropLong(ps, "total", hsd->rs_nblocks, "blocks");
-			PrgAppendPropLong(ps, "block", 100 * nr_blks/(hsd->rs_nblocks), "%");
+			ProgressPropLong(ps, "fetched", nr_blks, "blocks");
+			ProgressPropLong(ps, "total", hsd->rs_nblocks, "blocks");
+			ProgressPropLong(ps, "block", 100 * nr_blks/(hsd->rs_nblocks), "%");
 		}
 	}
 }
 
 static 
-void PrgScanRows(Scan* plan, PlanState* planstate, ProgressState* ps)
+void ProgressScanRows(Scan* plan, PlanState* planstate, ProgressState* ps)
 {
 	Index rti;
 	RangeTblEntry* rte;
@@ -1437,55 +1212,16 @@ void PrgScanRows(Scan* plan, PlanState* planstate, ProgressState* ps)
 	objectname = get_rel_name(rte->relid);
 
 	if (objectname != NULL) {
-		PrgAppendPropText(ps, "rows scan on", quote_identifier(objectname));
+		ProgressPropText(ps, "rows scan on", quote_identifier(objectname));
 	}
 	
-	PrgAppendPropLong(ps, "fetched", (unsigned long) planstate->plan_rows, "rows");
-	PrgAppendPropLong(ps, "total", (unsigned long) plan->plan.plan_rows, "rows");
-	PrgAppendPropLong(ps, "rows", (unsigned short) planstate->percent_done, "rows");
-}
-
-
-static
-void ProgressScanRows(Scan* plan, PlanState* planstate, ReportState* ps)
-{
-	Index rti;
-	RangeTblEntry* rte;
-	char* objectname;
-
-	if (plan == NULL)
-		return;
-
-	if (planstate == NULL)
-		return;
-
-	rti = plan->scanrelid; 
-	rte = rt_fetch(rti, ps->rtable);
-	objectname = get_rel_name(rte->relid);
-
-	if (inline_output) {
-		if (objectname != NULL) {
-			appendStringInfo(ps->str, " on %s", quote_identifier(objectname));
-		}
-
-		appendStringInfo(ps->str, " => rows %ld/%ld %d%%",
-			(long int) planstate->plan_rows,
-			(long int) plan->plan.plan_rows,
-			(unsigned short) planstate->percent_done);
-	} else {
-		ReportNewLine(ps);
-		if (objectname != NULL) {
-			ReportPropertyText("relation", quote_identifier(objectname), ps);
-		}
-
-		ReportPropertyLong("rows fetched", (long int) planstate->plan_rows, ps);
-                ReportPropertyLong("rows total", (long int) plan->plan.plan_rows, ps);
-                ReportPropertyIntegerNoNewLine("rows percent", (unsigned short) planstate->percent_done, ps);
-	}
+	ProgressPropLong(ps, "fetched", (unsigned long) planstate->plan_rows, "rows");
+	ProgressPropLong(ps, "total", (unsigned long) plan->plan.plan_rows, "rows");
+	ProgressPropLong(ps, "rows", (unsigned short) planstate->percent_done, "rows");
 }
 
 static
-void ProgressTidScan(TidScanState* ts, ReportState* ps)
+void ProgressTidScan(TidScanState* ts, ProgressState* ps)
 {
 	unsigned int percent;
 
@@ -1498,77 +1234,46 @@ void ProgressTidScan(TidScanState* ts, ReportState* ps)
 	else 
 		percent = (unsigned short)(100 * (ts->tss_TidPtr) / (ts->tss_NumTids));
 		
-	if (inline_output) {
-		appendStringInfo(ps->str, " => rows %ld/%ld %d%%",
-			(long int) ts->tss_TidPtr, (long int) ts->tss_NumTids, percent);
-	} else {
-		ReportNewLine(ps);
-		ReportPropertyLong("rows fetched", (long int) ts->tss_TidPtr, ps);
-		ReportPropertyLong("rows total", (long int) ts->tss_NumTids, ps);
-		ReportPropertyIntegerNoNewLine("rows percent", percent, ps);
-	}
+	ProgressPropLong(ps, "fetched", (long int) ts->tss_TidPtr, "rows");
+	ProgressPropLong(ps, "total", (long int) ts->tss_NumTids, "rows");
+	ProgressPropLong(ps, "rows", percent, "%");
 }
 
 static
-void ProgressLimit(LimitState* ls, ReportState* ps)
+void ProgressLimit(LimitState* ls, ProgressState* ps)
 {
 	if (ls == NULL)
 		return;
 
-	if (inline_output) {
-		if (ls->position == 0) {
-			appendStringInfoSpaces(ps->str, ps->indent);
-			appendStringInfo(ps->str, " => offset 0%% limit 0%%");
-			return;
-		}
+	if (ls->position == 0) {
+		ProgressPropLong(ps, "offset", 0, "%");
+		ProgressPropLong(ps, "count", 0, "%");
+	}
 
-		if (ls->position > 0 && ls->position <= ls->offset) {
-			appendStringInfoSpaces(ps->str, ps->indent);
-			appendStringInfo(ps->str, " => offset %d%% limit 0%%",
-				(unsigned short)(100 * (ls->position)/(ls->offset)));
-			return;
-		}
+	if (ls->position > 0 && ls->position <= ls->offset) {
+		ProgressPropLong(ps, "offset", (unsigned short)(100 * (ls->position)/(ls->offset)), "%");
+		ProgressPropLong(ps, "count", 0, "%");
+	}
 
-		if (ls->position > ls->offset) {
-			appendStringInfoSpaces(ps->str, ps->indent);
-			appendStringInfo(ps->str, " => offset 100%% limit %d%%",
-				(unsigned short)(100 * (ls->position - ls->offset)/(ls->count)));
-			return;
-		}
-	} else {
-		ReportNewLine(ps);
-		if (ls->position == 0) {
-			ReportPropertyInteger("offset %", 0, ps);
-			ReportPropertyIntegerNoNewLine("count %", 0, ps);
-		}
-
-		if (ls->position > 0 && ls->position <= ls->offset) {
-			ReportPropertyInteger("offset %",
-				(unsigned short)(100 * (ls->position)/(ls->offset)), ps);
-			ReportPropertyIntegerNoNewLine("count %", 0, ps);
-		}
-
-		if (ls->position > ls->offset) {
-			ReportPropertyInteger("offset %", 100, ps);
-			ReportPropertyIntegerNoNewLine("count %",
-				(unsigned short)(100 * (ls->position - ls->offset)/(ls->count)), ps);
-		}
+	if (ls->position > ls->offset) {
+		ProgressPropLong(ps, "offset", 100, "%");
+		ProgressPropLong(ps, "count", (unsigned short)(100 * (ls->position - ls->offset)/(ls->count)), "%");
 	}
 }
 
 static
-void ProgressCustomScan(CustomScanState* cs, ReportState* ps)
+void ProgressCustomScan(CustomScanState* cs, ProgressState* ps)
 {
 	if (cs == NULL)
 		return;
 
-	if (cs->methods->ProgressCustomScan) {
-		cs->methods->ProgressCustomScan(cs, NULL, ps);
-	}
+//	if (cs->methods->ProgressCustomScan) {
+//		cs->methods->ProgressCustomScan(cs, NULL, ps);
+//	}
 }
 
 static
-void ProgressIndexScan(IndexScanState* is, ReportState* ps) 
+void ProgressIndexScan(IndexScanState* is, ProgressState* ps) 
 {
 	PlanState planstate;
 	Plan* p;
@@ -1583,21 +1288,13 @@ void ProgressIndexScan(IndexScanState* is, ReportState* ps)
 		return;
 	}
 
-	if (inline_output) {
-		appendStringInfo(ps->str, " => rows %ld/%ld %d%%",
-			(long int) planstate.plan_rows,
-			(long int) p->plan_rows,
-			(unsigned short) planstate.percent_done);
-	} else {
-		ReportNewLine(ps);
-		ReportPropertyLong("rows fetched", (long int) planstate.plan_rows, ps);
-		ReportPropertyLong("rows total", (long int) p->plan_rows, ps);
-		ReportPropertyIntegerNoNewLine("rows %", (unsigned short) planstate.percent_done, ps);
-	}
+	ProgressPropLong(ps, "fetched", (long int) planstate.plan_rows, "rows");
+	ProgressPropLong(ps, "total", (long int) p->plan_rows, "rows");
+	ProgressPropLong(ps, "rows", (unsigned short) planstate.percent_done, "%");
 }
 
 static
-void ProgressModifyTable(ModifyTableState *mts, ReportState* ps)
+void ProgressModifyTable(ModifyTableState *mts, ProgressState* ps)
 {
 	EState* es;
 
@@ -1608,15 +1305,11 @@ void ProgressModifyTable(ModifyTableState *mts, ReportState* ps)
 	if (es == NULL)
 		return;
 
-	if (inline_output) {
-		appendStringInfo(ps->str, " => rows modified %ld", (long int) es->es_processed);
-	} else {
-		ReportPropertyLongNoNewLine("rows modified", (long int) es->es_processed, ps);
-	}
+	ProgressPropLong(ps, "modified", (long int) es->es_processed, "rows");
 }
 
 static
-void ProgressHash(HashState* hs, ReportState* ps)
+void ProgressHash(HashState* hs, ProgressState* ps)
 {
 	if (hs == NULL)
 		return;
@@ -1625,7 +1318,7 @@ void ProgressHash(HashState* hs, ReportState* ps)
 }
 
 static
-void ProgressHashJoin(HashJoinState* hjs, ReportState* ps)
+void ProgressHashJoin(HashJoinState* hjs, ProgressState* ps)
 {
 	if (hjs == NULL)
 		return;
@@ -1637,7 +1330,7 @@ void ProgressHashJoin(HashJoinState* hjs, ReportState* ps)
  * HashJoinTable is not a node type
  */
 static
-void ProgressHashJoinTable(HashJoinTable hashtable, ReportState* ps)
+void ProgressHashJoinTable(HashJoinTable hashtable, ProgressState* ps)
 {
 	int i;
 	unsigned long reads;
@@ -1656,12 +1349,7 @@ void ProgressHashJoinTable(HashJoinTable hashtable, ReportState* ps)
 	if (hashtable->nbatch <= 1)
 		return;
 
-	if (inline_output) {
-		appendStringInfo(ps->str, " => hashtable nbatch %d", hashtable->nbatch);
-        } else {
-		ReportNewLine(ps);
-                ReportPropertyInteger("hashtable nbatch", hashtable->nbatch, ps);
-        }
+	ProgressPropLong(ps, "hashtable nbatch", hashtable->nbatch, "");
 
 	/*
 	 * Display global reads and writes
@@ -1691,14 +1379,9 @@ void ProgressHashJoinTable(HashJoinTable hashtable, ReportState* ps)
   	 */
 	ps->disk_size += disk_size;
 
-	if (inline_output) {
-		appendStringInfo(ps->str, " kbytes r/w %ld/%ld, disk use (bytes) %ld",
-			reads/1024, writes/1024, disk_size);
-	} else {
-		ReportPropertyInteger("kbytes read", reads/1024, ps);
-		ReportPropertyInteger("kbytes write", writes/1024, ps);
-		ReportPropertyIntegerNoNewLine("disk use (bytes)", disk_size, ps);
-	}
+	ProgressPropLong(ps, "read", reads/1024, "KB");
+	ProgressPropLong(ps, "write", writes/1024, "KB");
+	ProgressPropLong(ps, "disk used", disk_size/1024, "KB");
 
 	/*
 	 * Only display details if requested
@@ -1709,68 +1392,30 @@ void ProgressHashJoinTable(HashJoinTable hashtable, ReportState* ps)
 	if (hashtable->nbatch == 0)
 		return;
 
-	ReportNewLine(ps);
-
 	ps->indent++;
 	for (i = 0; i < hashtable->nbatch; i++) {
-
-		if (inline_output) {
-			appendStringInfoSpaces(ps->str, ps->indent);	
-			appendStringInfo(ps->str, "batch %d\n", i);
-		} else {
-			ReportOpenGroup("batch", "batch", false, ps);
-			ReportPropertyInteger("batch", i, ps);
-		}
+		ProgressPropLong(ps, "batch", (long int) i, "");
 
 		if (hashtable->innerBatchFile[i]) {
-			if (inline_output) {
-				ps->indent++;
-				appendStringInfoSpaces(ps->str, ps->indent);	
-				appendStringInfo(ps->str, "inner ");
-			} else {
-				ReportOpenGroup("inner", "inner", false, ps);
-			}
-
+			ps->indent++;
+			ProgressPropText(ps, "group", "inner");
 			ProgressBufFile(hashtable->innerBatchFile[i], ps);
-
-			if (inline_output) {
-				ps->indent--;
-			} else {
-				ReportCloseGroup("inner", "inner", false, ps);
-			}
+			ps->indent--;
 		}
 
 		if (hashtable->outerBatchFile[i]) {
-			if (inline_output) {
-				ps->indent++;
-				appendStringInfoSpaces(ps->str, ps->indent);	
-				appendStringInfo(ps->str, "outer ");
-			} else {
-				ReportOpenGroup("outer", "outer", false, ps);
-			}				
-
+			ps->indent++;
+			ProgressPropText(ps, "group", "outer");
 			ProgressBufFile(hashtable->outerBatchFile[i], ps);
-
-			if (inline_output) {
-				ps->indent--;
-			} else {
-				ReportCloseGroup("outer", "outer", false, ps);
-			}
+			ps->indent--;
 		}
-
-		if (inline_output) {
-			/* EMPTY */
-		} else {
-			ReportCloseGroup("batch", "batch", false, ps);
-		}
-
 	}
 
 	ps->indent--;
 }
 
 static
-void ProgressBufFileRW(BufFile* bf, ReportState* ps,
+void ProgressBufFileRW(BufFile* bf, ProgressState* ps,
 	unsigned long *reads, unsigned long * writes, unsigned long *disk_size)
 {
 	MemoryContext oldcontext;
@@ -1797,7 +1442,7 @@ void ProgressBufFileRW(BufFile* bf, ReportState* ps,
 }
 	
 static
-void ProgressBufFile(BufFile* bf, ReportState* ps)
+void ProgressBufFile(BufFile* bf, ProgressState* ps)
 {
 	int i;
 	struct buffile_state* bfs;
@@ -1810,46 +1455,27 @@ void ProgressBufFile(BufFile* bf, ReportState* ps)
 	bfs = BufFileState(bf);
 	MemoryContextSwitchTo(oldcontext);
 
-	if (inline_output) {	
-		appendStringInfo(ps->str, "buffile files %d\n", bfs->numFiles);
-		ps->indent++;
-	} else {
-		ReportPropertyInteger("buffile nr files", bfs->numFiles, ps);
-	}
+	ps->indent++;
+	ProgressPropLong(ps, "buffile nr files", bfs->numFiles, "");
 
 	if (bfs->numFiles == 0)
 		return;
 
-	if (inline_output) {
-		appendStringInfoSpaces(ps->str, ps->indent);
-		appendStringInfo(ps->str, "disk use (bytes) %ld\n", bfs->disk_size);
-	} else {
-		ReportPropertyLong("disk use (bytes)", bfs->disk_size, ps);
-	}
+	ProgressPropLong(ps, "disk used", bfs->disk_size/1024,  "KB");
 
 	for (i = 0; i < bfs->numFiles; i++) {
-		if (inline_output) {
-			appendStringInfoSpaces(ps->str, ps->indent);	
-			appendStringInfo(ps->str, "file %d r/w (kbytes) %d/%d\n", 
-				i, bfs->bytes_read[i]/1024, bfs->bytes_write[i]/1024);
-		} else {
-			ps->indent++;
-			ReportOpenGroup("file", "file", true, ps);
-			ReportPropertyInteger("file", i, ps);
-			ReportPropertyInteger("kbytes read", bfs->bytes_read[i]/1024, ps);
-			ReportPropertyInteger("kbytes write", bfs->bytes_write[i]/1024, ps);	
-			ReportCloseGroup("file", "file", true, ps);
-			ps->indent--;
-		}
+		ps->indent++;
+		ProgressPropLong(ps, "file", i, "");
+		ProgressPropLong(ps, "read", bfs->bytes_read[i]/1024, "KB");
+		ProgressPropLong(ps, "write", bfs->bytes_write[i]/1024, "KB");
+		ps->indent--;
 	}	
 
-	if (inline_output) {
-		ps->indent--;
-	}
+	ps->indent--;
 }
 
 static
-void ProgressMaterial(MaterialState* planstate, ReportState* ps)
+void ProgressMaterial(MaterialState* planstate, ProgressState* ps)
 {
 	Tuplestorestate* tss;
 
@@ -1864,7 +1490,7 @@ void ProgressMaterial(MaterialState* planstate, ReportState* ps)
  * Tuplestorestate is not a node type
  */
 static
-void ProgressTupleStore(Tuplestorestate* tss, ReportState* ps)
+void ProgressTupleStore(Tuplestorestate* tss, ProgressState* ps)
 {
 	struct tss_report tssr;
 
@@ -1876,96 +1502,33 @@ void ProgressTupleStore(Tuplestorestate* tss, ReportState* ps)
 	switch (tssr.status) {
 	case TSS_INMEM:
 		/* Add separator */
-		if (inline_output) {
-			appendStringInfo(ps->str, " => memory tuples write=%ld", (long int) tssr.memtupcount);
-		} else {
-			ReportNewLine(ps);
-			ReportPropertyInteger("memory tuples write", (long int) tssr.memtupcount, ps);
-		}
+		ProgressPropLong(ps, "memory write", (long int) tssr.memtupcount, "rows");
+		if (tssr.memtupskipped > 0)
+			ProgressPropLong(ps, "memory skipped", (long int) tssr.memtupskipped, "rows");
 
-		if (tssr.memtupskipped > 0) {
-			if (inline_output) {
-				appendStringInfo(ps->str, " skipped=%ld", (long int) tssr.memtupskipped);
-			} else {
-				ReportPropertyInteger("skipped", (long int) tssr.memtupskipped, ps);
-			}
-		}
-
-		if (inline_output) {
-			appendStringInfo(ps->str, " read=%ld", (long int) tssr.memtupread);
-		} else  {
-			ReportPropertyInteger("read", (long int) tssr.memtupread, ps);
-		}
-
-		if (tssr.memtupdeleted) {
-			if (inline_output) {
-				appendStringInfo(ps->str, " deleted=%ld", (long int) tssr.memtupread);
-			} else {
-				ReportPropertyInteger("deleted", (long int) tssr.memtupread, ps);
-			}
-		}
-
+		ProgressPropLong(ps, "memory read", (long int) tssr.memtupread, "rows");
+		if (tssr.memtupdeleted)
+			ProgressPropLong(ps, "memory deleted", (long int) tssr.memtupread, "rows");
 		break;
 	
 	case TSS_WRITEFILE:
 	case TSS_READFILE:
-		if (tssr.status == TSS_WRITEFILE) {
-			if (inline_output) {
-				appendStringInfo(ps->str, " => file write");
-			} else {
-				ReportNewLine(ps);
-				ReportText("file store", "write", ps);
-			}
-		} else { 
-			if (inline_output) {
-				appendStringInfo(ps->str, " => file read");
-			} else {
-				ReportNewLine(ps);
-				ReportText("file store", "read", ps);
-			}
-		}
+		if (tssr.status == TSS_WRITEFILE)
+			ProgressPropText(ps, "file store", "write");
+		else 
+			ProgressPropText(ps, "file store", "read");
 
-		if (inline_output) {
-			appendStringInfo(ps->str, " readptrcount=%d", tssr.readptrcount);
-		} else {
-			ReportPropertyInteger("readptrcount", tssr.readptrcount, ps);
-		}
+		ProgressPropLong(ps, "readptrcount", tssr.readptrcount, "");
+		ProgressPropLong(ps, "write", (long int ) tssr.tuples_count, "rows");
+		if (tssr.tuples_skipped)
+			ProgressPropLong(ps, "skipped", (long int) tssr.tuples_skipped, "rows");
 
-		if (inline_output) {
-			appendStringInfo(ps->str, " rows write=%ld", (long int ) tssr.tuples_count);
-		} else {
-			ReportPropertyInteger("rows write", (long int ) tssr.tuples_count, ps);
-		}
-
-		if (tssr.tuples_skipped) {
-			if (inline_output) {
-				appendStringInfo(ps->str, " skipped=%ld", (long int) tssr.tuples_skipped);
-			} else {
-				ReportPropertyInteger("rows skipped", (long int) tssr.tuples_skipped, ps);
-			}
-		}
-
-		if (inline_output) {
-			appendStringInfo(ps->str, " read=%ld", (long int) tssr.tuples_read);
-		} else {
-			ReportPropertyInteger("rows read", (long int) tssr.tuples_read, ps);
-		}
-			
-		if (tssr.tuples_deleted) {
-			if (inline_output) {
-				appendStringInfo(ps->str, " deleted=%ld", (long int ) tssr.tuples_deleted);
-			} else {
-				ReportPropertyInteger("rows deleted", (long int ) tssr.tuples_deleted, ps);
-			}
-		}
+		ProgressPropLong(ps, "read", (long int) tssr.tuples_read, "rows");
+		if (tssr.tuples_deleted)
+			ProgressPropLong(ps, "deleted", (long int) tssr.tuples_deleted, "rows");
 
 		ps->disk_size += tssr.disk_size;
-		if (inline_output) {
-			appendStringInfo(ps->str, " disk use (bytes) %ld", tssr.disk_size);
-		} else {
-			ReportPropertyLongNoNewLine("disk use (bytes)", tssr.disk_size, ps);
-		}
-
+		ProgressPropLong(ps, "disk used", tssr.disk_size/2014, "KB");
 		break;
 
 	default:
@@ -1974,7 +1537,7 @@ void ProgressTupleStore(Tuplestorestate* tss, ReportState* ps)
 }
 
 static
-void ProgressAgg(AggState* planstate, ReportState* ps)
+void ProgressAgg(AggState* planstate, ProgressState* ps)
 {
 	if (planstate == NULL)
 		return;
@@ -1984,7 +1547,7 @@ void ProgressAgg(AggState* planstate, ReportState* ps)
 }
 
 static
-void ProgressSort(SortState* ss, ReportState* ps)
+void ProgressSort(SortState* ss, ProgressState* ps)
 {
 	Assert(nodeTag(ss) == T_SortState);
 
@@ -1998,13 +1561,11 @@ void ProgressSort(SortState* ss, ReportState* ps)
 }
 
 static
-void ProgressTupleSort(Tuplesortstate* tss, ReportState* ps)
+void ProgressTupleSort(Tuplesortstate* tss, ProgressState* ps)
 {
 	struct ts_report* tsr;
 	MemoryContext oldcontext;
 	
-	const char* status_sorted_on_tape = "sort completed on tapes / fetching from tapes";
-
 	if (tss == NULL)
 		return;
 	
@@ -2015,61 +1576,31 @@ void ProgressTupleSort(Tuplesortstate* tss, ReportState* ps)
 	switch (tsr->status) {
 	case TSS_INITIAL:		/* Loading tuples in mem still within memory limit */
 	case TSS_BOUNDED:		/* Loading tuples in mem into bounded-size heap */
-		if (inline_output) {
-			appendStringInfo(ps->str, " in memory loading tuples %d", tsr->memtupcount);			
-		} else {
-			ReportNewLine(ps);
-			ReportText("status", "loading tuples in memory", ps);
-			ReportPropertyIntegerNoNewLine("tuples in memory", tsr->memtupcount, ps);	
-		}
+		ProgressPropText(ps, "status", "loading tuples in memory");
+		ProgressPropLong(ps, "tuples in memory", tsr->memtupcount, "rows");	
 		break;
 
 	case TSS_SORTEDINMEM:		/* Sort completed entirely in memory */
-		if (inline_output) {
-			appendStringInfo(ps->str, " in memory sort completed %d", tsr->memtupcount);
-		} else {
-			ReportNewLine(ps);
-			ReportText("status", "sort completed in memory", ps);
-			ReportPropertyIntegerNoNewLine("tuples in memory", tsr->memtupcount, ps);
-		}
+		ProgressPropText(ps, "status", "sort completed in memory");
+		ProgressPropLong(ps, "tuples in memory", tsr->memtupcount, "rows");	
 		break;
 
 	case TSS_BUILDRUNS:		/* Dumping tuples to tape */
 		switch (tsr->sub_status) {
 		case TSSS_INIT_TAPES:
-			if (inline_output) {
-				appendStringInfo(ps->str, " on tapes initializing");
-			} else {
-				ReportNewLine(ps);
-				ReportTextNoNewLine("status", "on tapes initializing", ps);
-			}
+			ProgressPropText(ps, "status", "on tapes initializing");
 			break;
 
 		case TSSS_DUMPING_TUPLES:
-			if (inline_output) {
-				appendStringInfo(ps->str, " on tapes writing");
-			} else {
-				ReportNewLine(ps);
-				ReportTextNoNewLine("status", "on tapes writing", ps);
-			}
+			ProgressPropText(ps, "status", "on tapes writing");
 			break;
 
 		case TSSS_SORTING_ON_TAPES:
-			if (inline_output) {
-				appendStringInfo(ps->str, " on tapes sorting");
-			} else {
-				ReportNewLine(ps);
-				ReportTextNoNewLine("status", "on tapes sorting", ps);
-			}
+			ProgressPropText(ps, "status", "on tapes sorting");
 			break;
 
 		case TSSS_MERGING_TAPES:
-			if (inline_output) {
-				appendStringInfo(ps->str, " on tapes merging");
-			} else {	
-				ReportNewLine(ps);
-				ReportTextNoNewLine("status", "on tapes merging", ps);
-			}
+			ProgressPropText(ps, "status", "on tapes merging");
 			break;
 		default:
 			;
@@ -2079,34 +1610,18 @@ void ProgressTupleSort(Tuplesortstate* tss, ReportState* ps)
 		break;
 	
 	case TSS_FINALMERGE: 		/* Performing final merge on-the-fly */
-		if (inline_output) {
-			appendStringInfo(ps->str, " on tapes final merge");
-		} else {
-			ReportNewLine(ps);
-			ReportTextNoNewLine("status", "on tapes final merge", ps);
-		}
-
+		ProgressPropText(ps, "status", "on tapes final merge");
 		dumpTapes(tsr, ps);	
 		break;
 
 	case TSS_SORTEDONTAPE:		/* Sort completed, final run is on tape */
 		switch (tsr->sub_status) {
 		case TSSS_FETCHING_FROM_TAPES:
-			if (inline_output) {
-				appendStringInfo(ps->str, " => %s", status_sorted_on_tape);
-			} else {
-				ReportNewLine(ps);
-				ReportTextNoNewLine("status", status_sorted_on_tape, ps);
-			}
+			ProgressPropText(ps, "status", "fetching from sorted tapes");
 			break;
 
 		case TSSS_FETCHING_FROM_TAPES_WITH_MERGE:
-			if (inline_output) {
-				appendStringInfo(ps->str, " on tapes sort completed => fetching from tapes with merge");
-			} else {
-				ReportNewLine(ps);
-				ReportTextNoNewLine("status", "on tapes sort completed => fetching from tapes with merge", ps);
-			}
+			ProgressPropText(ps, "status", "fetching from sorted tapes with merge");
 			break;
 		default:
 			;
@@ -2116,17 +1631,12 @@ void ProgressTupleSort(Tuplesortstate* tss, ReportState* ps)
 		break;
 
 	default:
-		if (inline_output) {
-			appendStringInfo(ps->str, " => unexpected sort state");
-		} else {
-			ReportNewLine(ps);
-			ReportTextNoNewLine("status", "unexpected sort state", ps);
-		}
+		ProgressPropText(ps, "status", "unexpected sort state");
 	};
 }
 
 static
-void dumpTapes(struct ts_report* tsr, ReportState* ps)
+void dumpTapes(struct ts_report* tsr, ProgressState* ps)
 {
 	int i;
 	int percent_effective;
@@ -2134,97 +1644,62 @@ void dumpTapes(struct ts_report* tsr, ReportState* ps)
 	if (tsr == NULL)
 		return;
 
-	if (ps->verbose) {
-		if (inline_output) {
-			appendStringInfoSpaces(ps->str, ps->indent * 2);
-			appendStringInfo(ps->str, ": total=%d actives=%d",
-				tsr->maxTapes, tsr->activeTapes); 
-		} else {
-			ReportNewLine(ps);
-			ReportOpenGroup("tapes", "tapes", false, ps);
-			ReportPropertyInteger("total", tsr->maxTapes, ps);
-			ReportPropertyInteger("actives", tsr->activeTapes, ps);
-		}
-
-		if (tsr->result_tape != -1) {
-			if (inline_output) {
-				appendStringInfo(ps->str, " result=%d", tsr->result_tape);
-			} else {
-				ReportPropertyInteger("result", tsr->result_tape, ps);
-			}
-		}
-
-		if (inline_output) {
-			appendStringInfo(ps->str, "\n");
-		}
-
-		if (tsr->maxTapes != 0) {
-			for (i = 0; i< tsr->maxTapes; i++) {
-				if (inline_output) {
-					appendStringInfoSpaces(ps->str, ps->indent * 2);
-					/* TODO: test pointers */
-					appendStringInfo(ps->str, "  -> tape %d: %d %d  %d %d %d\n",
-						i, tsr->tp_fib[i], tsr->tp_runs[i], tsr->tp_dummy[i],
-						tsr->tp_read[i], tsr->tp_write[i]);
-				} else {	
-					ReportPropertyInteger("tape idx", i, ps);
-					ps->indent++;
-					if (tsr->tp_fib != NULL)
-						ReportPropertyInteger("fib", tsr->tp_fib[i], ps);
-
-					if (tsr->tp_runs != NULL)
-						ReportPropertyInteger("runs", tsr->tp_runs[i], ps);
-
-					if (tsr->tp_dummy != NULL)
-						ReportPropertyInteger("dummy", tsr->tp_dummy[i], ps);
-
-					if (tsr->tp_read != NULL)
-						ReportPropertyInteger("read", tsr->tp_read[i], ps);
-
-					if (tsr->tp_write)	
-						ReportPropertyInteger("write", tsr->tp_write[i], ps);
-				
-					ps->indent--;
-				}
-			}
-		}
-
-		if (inline_output) {
-			/* EMPTY */
-		} else {
-			ReportCloseGroup("tapes", "tapes", false, ps);
-		}
-	}
-
 	if (tsr->tp_write_effective > 0)
 		percent_effective = (tsr->tp_read_effective * 100)/tsr->tp_write_effective;
 	else 
 		percent_effective = 0;
 
-	if (inline_output) {
-		appendStringInfo(ps->str, " =>  rows r/w merge %d/%d sort %d/%d %d%% tape blocks %d",
-			tsr->tp_read_merge, tsr->tp_write_merge,
-			tsr->tp_read_effective, tsr->tp_write_effective,
-			percent_effective, 
-			tsr->blocks_alloc);
-	} else {	
-		ReportNewLine(ps);
-		ReportPropertyInteger("rows merge reads", tsr->tp_read_merge, ps);
-		ReportPropertyInteger("rows merge writes", tsr->tp_write_merge, ps);
-		ReportPropertyInteger("rows effective reads", tsr->tp_read_effective, ps);
-		ReportPropertyInteger("rows effective writes", tsr->tp_write_effective, ps);
-		ReportPropertyInteger("percent %", percent_effective, ps);
-		ReportPropertyIntegerNoNewLine("tape blocks", tsr->blocks_alloc, ps);
-	}
+	ProgressPropLong(ps, "merge reads", tsr->tp_read_merge, "rows");
+	ProgressPropLong(ps, "merge writes", tsr->tp_write_merge, "rows");
+	ProgressPropLong(ps, "effective reads", tsr->tp_read_effective, "rows");
+	ProgressPropLong(ps, "effective writes", tsr->tp_write_effective, "rows");
+	ProgressPropLong(ps, "effective", percent_effective, "%");
+	ProgressPropLong(ps, "tape size", tsr->blocks_alloc, "BLKS");
 
 	/*
 	 * Update total disk size used 
 	 */
 	ps->disk_size += tsr->blocks_alloc * BLCKSZ;
+
+	if (!ps->verbose)
+		return;
+
+	/*
+	 * Verbose report
+	 */
+	ProgressPropLong(ps, "tapes total", tsr->maxTapes, "");
+	ProgressPropLong(ps, "tapes actives", tsr->activeTapes, "");
+
+	if (tsr->result_tape != -1)
+		ProgressPropLong(ps, "tape result", tsr->result_tape, "");
+
+	if (tsr->maxTapes != 0) {
+		for (i = 0; i< tsr->maxTapes; i++) {
+			ProgressPropLong(ps, "tape idx", i, "");
+
+			ps->indent++;
+			if (tsr->tp_fib != NULL)
+				ProgressPropLong(ps, "fib", tsr->tp_fib[i], "");
+
+			if (tsr->tp_runs != NULL)
+				ProgressPropLong(ps, "runs", tsr->tp_runs[i], "");
+
+			if (tsr->tp_dummy != NULL)
+				ProgressPropLong(ps, "dummy", tsr->tp_dummy[i], "");
+
+			if (tsr->tp_read != NULL)
+				ProgressPropLong(ps, "read", tsr->tp_read[i], "");
+
+			if (tsr->tp_write)	
+				ProgressPropLong(ps, "write", tsr->tp_write[i], "");
+				
+			ps->indent--;
+		}
+	}
 }
 
 static
-void ReportTime(QueryDesc* query, ReportState* ps)
+void ReportTime(QueryDesc* query, ProgressState* ps)
 {
 	instr_time currenttime;
 
@@ -2237,31 +1712,24 @@ void ReportTime(QueryDesc* query, ReportState* ps)
 	INSTR_TIME_SET_CURRENT(currenttime);
 	INSTR_TIME_SUBTRACT(currenttime, query->totaltime->starttime);
 
-	if (inline_output) {
-		appendStringInfo(ps->str, "time used (s): %.0f\n",  INSTR_TIME_GET_MILLISEC(currenttime)/1000);
-	} else {
-		ReportPropertyInteger("time used (s)", INSTR_TIME_GET_MILLISEC(currenttime)/1000, ps);
-	}
+	ProgressPropLong(ps, "time used", INSTR_TIME_GET_MILLISEC(currenttime)/1000, "seconds");
 }
 
 static  
-void ReportStack(ReportState* ps)
+void ReportStack(ProgressState* ps)
 {
 	unsigned long depth;
 	unsigned long max_depth;
 
 	depth =	get_stack_depth();
 	max_depth = get_max_stack_depth();
-	if (inline_output) {
-		appendStringInfo(ps->str, "current/max stack depth (bytes) %ld/%ld\n", depth, max_depth); 
-	} else {
-		ReportPropertyLong("current stack depth (bytes)", depth, ps);
-		ReportPropertyLong("max stack depth (bytes)", max_depth, ps);
-	}
+
+	ProgressPropLong(ps, "stack depth", depth, "Bytes");
+	ProgressPropLong(ps, "max stack depth", max_depth, "Bytes");
 }
 
 static
-void ReportDisk(ReportState*  ps)
+void ReportDisk(ProgressState*  ps)
 {
 	unsigned long size;
 	char* unit;
@@ -2280,12 +1748,6 @@ void ReportDisk(ReportState*  ps)
 		unit = "GB";
 		size = size / (1024 * 1024 * 1024);
 	}
-			
-	if (inline_output) {
-		appendStringInfo(ps->str, "total disk space used (%s) %ld\n", unit, size);
-	} else {
-		ReportPropertyText("unit", unit, ps);
-		ReportPropertyLong("total disk space used", size, ps);
-	}
+		
+	ProgressPropLong(ps, "disk used", size, unit);
 }
-

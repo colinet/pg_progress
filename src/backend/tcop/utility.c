@@ -67,7 +67,6 @@
 #include "utils/acl.h"
 #include "utils/guc.h"
 #include "utils/syscache.h"
-#include "executor/progress.h"
 
 
 /* Hook for plugins to get control in ProcessUtility() */
@@ -680,10 +679,6 @@ standard_ProcessUtility(PlannedStmt *pstmt,
 		case T_ExplainStmt:
 			ExplainQuery(pstate, (ExplainStmt *) parsetree, queryString, params,
 						 queryEnv, dest);
-			break;
-
-		case T_ProgressStmt:
-			ProgressSendRequest(pstate, (ProgressStmt*) parsetree, dest);
 			break;
 
 		case T_AlterSystemStmt:
@@ -2508,10 +2503,6 @@ CreateCommandTag(Node *parsetree)
 
 		case T_ExplainStmt:
 			tag = "EXPLAIN";
-			break;
-
-		case T_ProgressStmt:
-			tag = "PROGRESS";
 			break;
 
 		case T_CreateTableAsStmt:

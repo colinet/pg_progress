@@ -14,9 +14,6 @@
 #ifndef PROGRESS_H
 #define PROGRESS_H
 
-/* This is temporary and needed for PROGRESS_FORMAT_ macros */
-#include "commands/report.h"
-
 /*
  * This is arbitratry defined
  * TODO: Add a guc variable to enable dynamic definition
@@ -39,13 +36,11 @@ extern ReportState* progress_state;
  */
 extern size_t ProgressShmemSize(void);
 extern void ProgressShmemInit(void);
-extern void ProgressBackendInit(void);
-extern void ProgressBackendExit(int code, Datum arg);
 
 /* 
  * external functions
  */
-extern void ProgressSendRequest(ParseState* pstate, ProgressStmt* stmt, DestReceiver* dest);
+extern void ProgressSendRequest(int pid, int verbose, char* buf);
 extern void HandleProgressSignal(void);
 extern void HandleProgressRequest(void);
 

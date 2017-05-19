@@ -50,7 +50,6 @@ typedef struct ReportState {
          * State for output formating   
          */
         StringInfo str;                 /* output buffer */
-        StringInfo str2;                 /* output buffer */
         ReportFormat format;		/* format used to output progress */
         int indent;                     /* current indentation level */
         List* grouping_stack;           /* format-specific grouping state */

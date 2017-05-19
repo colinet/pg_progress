@@ -26,7 +26,6 @@
 #include "tcop/utility.h"
 #include "utils/memutils.h"
 #include "utils/snapmgr.h"
-#include "executor/progress.h"
 
 
 /*
@@ -160,13 +159,6 @@ ProcessQuery(PlannedStmt *plan,
 								dest, params, queryEnv, 0);
 
 	/*
-	 * Create the Progress String buffer used to report progress
-	 * Space needs to be allocated now because such buffer will be used under 
-	 * signal context when memory allocation is not possible.
-	 */
-	//progress_state = CreateProgressState();
-
-	/*
 	 * Call ExecutorStart to prepare the plan for execution
 	 */
 	ExecutorStart(queryDesc, 0);
@@ -222,7 +214,6 @@ ProcessQuery(PlannedStmt *plan,
 	ExecutorEnd(queryDesc);
 
 	FreeQueryDesc(queryDesc);
-	//FreeProgressState(progress_state);
 }
 
 /*
@@ -520,15 +511,6 @@ PortalStart(Portal portal, ParamListInfo params,
 											params,
 											portal->queryEnv,
 											0);
-
-				/*
-				 * Create the Progress String buffer used to report progress
-				 * Space needs to be allocated now because such buffer will be used under
-				 * signal context when memory allocation is not possible.
-				 */
-				//progress_state = CreateProgressState();
-				//if (progress_state == NULL)
-				//	elog(LOG, "ERROR: progress_state is NULL");
 
 				/*
 				 * If it's a scrollable cursor, executor needs to support

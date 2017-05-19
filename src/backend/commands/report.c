@@ -51,11 +51,9 @@ static void escape_yaml(StringInfo buf, const char *str);
 ReportState* CreateReportState(int needed)
 {
 	StringInfo str;
-	StringInfo str2;
 	ReportState* prg;
 
 	str = makeStringInfo();
-	str2 = makeStringInfo();
 
 	/* default allocation size is 1024 */
 	if (needed > 1024)
@@ -67,7 +65,6 @@ ReportState* CreateReportState(int needed)
 	prg->parallel_reported = false;
 	prg->child = false;
 	prg->str = str;
-	prg->str2 = str2;
 	prg->indent = 0;
 	prg->nonewline = false;
 

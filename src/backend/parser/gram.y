@@ -268,7 +268,7 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 		DropTransformStmt
 		DropUserMappingStmt ExplainStmt FetchStmt
 		GrantStmt GrantRoleStmt ImportForeignSchemaStmt IndexStmt InsertStmt
-		ListenStmt LoadStmt LockStmt NotifyStmt ExplainableStmt PreparableStmt ProgressStmt
+		ListenStmt LoadStmt LockStmt NotifyStmt ExplainableStmt PreparableStmt
 		CreateFunctionStmt AlterFunctionStmt ReindexStmt RemoveAggrStmt
 		RemoveFuncStmt RemoveOperStmt RenameStmt RevokeStmt RevokeRoleStmt
 		RuleActionStmt RuleActionStmtOrEmpty RuleStmt
@@ -499,11 +499,6 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 %type <defelt>	explain_option_elem
 %type <list>	explain_option_list
 
-%type <list>	progress_option_list
-%type <defelt>	progress_option_elem
-%type <str>     progress_option_name
-%type <node>   	progress_option_arg
-
 %type <ival>	reindex_target_type reindex_target_multitable
 %type <ival>	reindex_option_list reindex_option_elem
 
@@ -637,7 +632,7 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 	EXTENSION EXTERNAL EXTRACT
 
 	FALSE_P FAMILY FETCH FILTER FIRST_P FLOAT_P FOLLOWING FOR
-	FORCE FOREIGN FORMAT FORWARD FREEZE FROM FULL FUNCTION FUNCTIONS
+	FORCE FOREIGN FORWARD FREEZE FROM FULL FUNCTION FUNCTIONS
 
 	GENERATED GLOBAL GRANT GRANTED GREATEST GROUP_P GROUPING
 
@@ -667,7 +662,7 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 
 	PARALLEL PARSER PARTIAL PARTITION PASSING PASSWORD PLACING PLANS POLICY
 	POSITION PRECEDING PRECISION PRESERVE PREPARE PREPARED PRIMARY
-	PRIOR PRIVILEGES PROCEDURAL PROCEDURE PROGRAM PROGRESS PUBLICATION
+	PRIOR PRIVILEGES PROCEDURAL PROCEDURE PROGRAM PUBLICATION
 
 	QUOTE
 
@@ -915,7 +910,6 @@ stmt :
 			| DropdbStmt
 			| ExecuteStmt
 			| ExplainStmt
-			| ProgressStmt
 			| FetchStmt
 			| GrantStmt
 			| GrantRoleStmt
@@ -10382,70 +10376,6 @@ explain_option_arg:
 			| /* EMPTY */			{ $$ = NULL; }
 		;
 
-/*****************************************************************************
- *
- *               PROGRESS:
- *                          PROGRESS <backend_id>
- *
- *****************************************************************************/
-
-ProgressStmt:
-PROGRESS Iconst
-        {
-                ProgressStmt *n = makeNode(ProgressStmt);
-
-                n->pid = $2;
-                $$ = (Node *) n;
-} 
-| PROGRESS VERBOSE Iconst
-        {
-                ProgressStmt *n = makeNode(ProgressStmt);
-
-                n->pid = $3;
-		n->options = list_make1(makeDefElem("verbose", NULL, @2));
-                $$ = (Node *) n;
-}
-| PROGRESS '(' progress_option_list ')' Iconst 
-	{
-		ProgressStmt *n = makeNode(ProgressStmt);
-		
-		n->pid = $5;
-		n->options = $3;
-		$$ = (Node *) n;
-}
-| PROGRESS VERBOSE '(' progress_option_list ')' Iconst
-	{
-		ProgressStmt *n = makeNode(ProgressStmt);
-
-		n->pid = $6;
-		n->options = lcons(makeDefElem("verbose", NULL, @2), $4);	
-		$$ = (Node *) n;
-};
-
-progress_option_list:
-progress_option_elem {
-	$$ = list_make1($1);
-}
-| progress_option_list ',' progress_option_elem {
-	$$ = lappend($1, $3);
-};
-
-progress_option_elem:
-progress_option_name progress_option_arg {
-	$$ = makeDefElem($1, $2, @1);
-};
- 
-progress_option_name: FORMAT
-{
-	$$ = "format";
-}
-;
-
-progress_option_arg: NonReservedWord
-{
-	$$ = (Node*) makeString($1);
-};
-
 
 /*****************************************************************************
  *
@@ -14882,7 +14812,6 @@ unreserved_keyword:
 			| PROCEDURAL
 			| PROCEDURE
 			| PROGRAM
-			| PROGRESS
 			| PUBLICATION
 			| QUOTE
 			| RANGE
@@ -15128,7 +15057,6 @@ reserved_keyword:
 			| FETCH
 			| FOR
 			| FOREIGN
-			| FORMAT
 			| FROM
 			| GRANT
 			| GROUP_P
