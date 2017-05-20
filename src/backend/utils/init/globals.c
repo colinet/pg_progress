@@ -148,4 +148,4 @@ int			VacuumCostBalance = 0;		/* working state for vacuum */
 bool		VacuumCostActive = false;
 
 StringInfo	progress_str;
-ReportState*	progress_state;
+//ReportState*	progress_state;

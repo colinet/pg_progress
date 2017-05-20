@@ -97,6 +97,7 @@ typedef struct ProgressCtl {
 	bool parallel;			/* true if parallel query */
 	bool child;			/* true if child worker */
 	unsigned int child_indent;	/* Indentation for child worker */
+	int lineid;
 
 	unsigned long disk_size;	/* Disk size in bytes used by the backend for sorts, stores, hashes */
 
@@ -198,6 +199,7 @@ static void ProgressResetRequest(ProgressCtl* req);
 
 static void ProgressPropLong(ProgressState* ps, const char* prop, unsigned long value, const char* unit);
 static void ProgressPropText(ProgressState* ps, const char* prop, const char* value);
+static void ProgressPropTextStr(StringInfo str, int pid, int lineid, int indent, const char* prop, const char* value);
 
 static ProgressState* CreateProgressState(void);
 
@@ -300,7 +302,7 @@ void ProgressPropLong(ProgressState* ps, const char* prop, unsigned long value, 
 }
 
 static
-void ProgressPropText(ProgressState* ps, const char* prop, const char* value)
+void ProgressPropText(ProgressState* ps,  const char* prop, const char* value)
 {
 	/*
 	 * Fields are: pid, lineid, indent, name, value, unit
@@ -318,6 +320,12 @@ void ProgressPropText(ProgressState* ps, const char* prop, const char* value)
 }
 
 static
+void ProgressPropTextStr(StringInfo str, int pid, int lineid, int indent, const char* prop, const char* value)
+{
+	appendStringInfo(str, "%d|%d|%d|%s|%s||", pid, lineid, indent, prop, value);
+}
+
+static
 void ProgressResetReport(ProgressState* ps)
 {
 	resetStringInfo(ps->str);
@@ -329,6 +337,7 @@ void ProgressResetReport(ProgressState* ps)
 Datum pg_progress(PG_FUNCTION_ARGS)
 {
 	int pid;
+	int bid;
 	char* buf;
 
 	unsigned short verbose;
@@ -343,11 +352,27 @@ Datum pg_progress(PG_FUNCTION_ARGS)
 	MemoryContext oldcontext;
 
 	char pid_str[9];
+	int pid_val;
+
 	char lineid_str[9];
+	int lineid_val;
+
 	char indent_str[9];
-	char prop_str[256];
+	int indent_val;
+
+	char prop_str[257];
 	char value_str[17];
 	char unit_str[9];
+
+	char* test;
+
+	char* token_start;
+	char* token_next;
+	unsigned short token_length;
+	unsigned short total_length;
+	int i;
+
+	//	int pid_index;
 
 	if (debug)
 		elog(LOG, "Start of pg_progress");
@@ -357,9 +382,9 @@ Datum pg_progress(PG_FUNCTION_ARGS)
 	 */
 	pid = PG_ARGISNULL(0) ? 0 : PG_GETARG_INT32(0);
 	verbose = PG_ARGISNULL(0) ? false : PG_GETARG_UINT16(1);
-
-	rsinfo = (ReturnSetInfo*) fcinfo->resultinfo;
-
+	if (debug)
+		elog(LOG, "pid = %d, verbose = %d", pid, verbose);
+	
 	/*
 	 * Build a tuple descriptor for our result type
 	 */
@@ -370,62 +395,12 @@ Datum pg_progress(PG_FUNCTION_ARGS)
 	/*
 	 * Switch to query memory context
 	 */
+	rsinfo = (ReturnSetInfo*) fcinfo->resultinfo;
 	per_query_ctx = rsinfo->econtext->ecxt_per_query_memory;
 	oldcontext = MemoryContextSwitchTo(per_query_ctx);
 
 	/* Allocate buf for local work */
 	buf = palloc0(PROGRESS_AREA_SIZE);
-	ProgressSendRequest(pid, verbose, buf);
-
-	tupstore = tuplestore_begin_heap(true, false, work_mem);
-	rsinfo->returnMode = SFRM_Materialize;
-	rsinfo->setResult = tupstore;
-	rsinfo->setDesc = tupdesc;
-
-	MemSet(values, 0, sizeof(values));
-	MemSet(nulls, 0, sizeof(nulls));
-
-	while (sscanf(buf, "%9[^|],%9[^|],%9[^|],%256[^|],%17[^|],%9[^|]",
-		pid_str, lineid_str, indent_str, prop_str, value_str, unit_str) != EOF) {
-		values[0] = CStringGetDatum(pid_str);
-		nulls[0] = false;
-
-		values[1] = CStringGetDatum(lineid_str);
-		nulls[1] = false;
-
-		values[2] = CStringGetDatum(indent_str);
-		nulls[2] = false;
-
-		values[3] = CStringGetDatum(prop_str);
-		nulls[3] = false;
-
-		values[4] = CStringGetDatum(value_str);
-		nulls[4] = false;
-
-		values[5] = CStringGetDatum(unit_str);
-		nulls[5] = false;
-
-		tuplestore_putvalues(tupstore, tupdesc, values, nulls);
-	}
-	
-	tuplestore_donestoring(tupstore);
-
-	pfree(buf);
-	MemoryContextSwitchTo(oldcontext);
-
-	return (Datum) 0;
-}
-
-/*
- * ProgressSendRequest:
- * 	Log a request to a backend in order to fetch its progress log
- *	This is initaited by the SQL command: PROGRESS pid.
- */
-void ProgressSendRequest(int pid, int verbose, char* buf)
-{
-	BackendId bid;
-	ProgressCtl* req;			// Used for the request
-	unsigned int buf_len = 0;
 
 	/* Convert pid to backend_id */
 	bid = ProcPidGetBackendId(pid);
@@ -441,6 +416,160 @@ void ProgressSendRequest(int pid, int verbose, char* buf)
 		errmsg("Cannot request status from self")));
 	}
 
+	if (debug)
+		elog(LOG, "pid = %d, bid = %d", pid, bid);
+
+	ProgressSendRequest(pid, bid, verbose, buf);
+
+	/*
+	 * Setup tuple store
+	 */
+	if (debug) {
+		elog(LOG, "setting up tuplestore");
+		elog(LOG, "bug content: %s", buf);
+	}
+
+	tupstore = tuplestore_begin_heap(true, false, work_mem);
+	rsinfo->returnMode = SFRM_Materialize;
+	rsinfo->setResult = tupstore;
+	rsinfo->setDesc = tupdesc;
+
+	MemSet(values, 0, sizeof(values));
+	MemSet(nulls, 0, sizeof(nulls));
+
+	if (debug) {
+		elog(LOG, "final buffer: %s", buf);
+	}
+
+	token_start = buf;
+	token_next = buf;
+
+	token_next = strchr(token_start, '|');
+	total_length = strlen(buf);
+	
+	elog(LOG, "total length = %d", total_length);
+	i = 0;
+
+	test = palloc0(100);
+	memcpy(test, "AAABBB", 6);
+
+	while (token_start != NULL) {
+		token_length = (unsigned short)(token_next - token_start);
+		elog(LOG, "START ========== field %d ============== token_length = %d", i, token_length);
+
+		switch(i) {
+                case 0:
+                        snprintf(pid_str, token_length + 1, "%s", token_start);
+                        pid_str[token_length + 1] = '\0';
+                        elog(LOG, "pid = %s\n", pid_str);
+                        break;
+                case 1:
+                        snprintf(lineid_str, token_length + 1, "%s", token_start);
+                        lineid_str[token_length + 1] = '\0';
+                        elog(LOG, "lineid_str = %s\n", lineid_str);
+                        break;
+                case 2:
+                        snprintf(indent_str, token_length + 1, "%s", token_start);
+                        indent_str[token_length + 1] = '\0';
+                        elog(LOG, "indent_str = %s\n", indent_str);
+                        break;
+                case 3:
+                        snprintf(prop_str, token_length + 1, "%s", token_start);
+                        prop_str[token_length + 1] = '\0';
+                        elog(LOG, "prop_str = %s\n", prop_str);
+                        break;
+                case 4:
+                        snprintf(value_str, token_length + 1, "%s", token_start);
+                        value_str[token_length + 1] = '\0';
+                        elog(LOG, "value_str = %s\n", value_str);
+                        break;
+                case 5:
+                        snprintf(unit_str, token_length + 1, "%s", token_start);
+                        unit_str[token_length + 1] = '\0';
+                        elog(LOG, "unit_str = %s\n", unit_str);
+                        break;
+                };
+
+                i++;
+
+                if (i == 6) {
+			/* PK */
+			pid_val = atoi(pid_str);	
+			values[0] = Int32GetDatum(pid_val);
+			nulls[0] = false;
+
+			/* PK */
+			lineid_val = atoi(lineid_str);
+			values[1] = Int32GetDatum(lineid_val);
+			nulls[1] = false;
+
+			/* PK */
+			indent_val = atoi(indent_str);
+			values[2] = Int32GetDatum(indent_val);
+			nulls[2] = false;
+
+			/* PK */
+			values[3] = CStringGetTextDatum("property");
+			//values[3] = CStringGetTextDatum(prop_str);
+			nulls[3] = false;
+
+			if (strlen(value_str) == 0) {
+				nulls[4] = true;
+			} else {
+				values[4] = CStringGetTextDatum("value");
+				//values[4] = CStringGetTextDatum(value_str);
+				nulls[4] = false;
+			}
+
+			if (strlen(unit_str) == 0) {
+				nulls[5] = true;
+			} else {
+				values[5] = CStringGetTextDatum("unit");
+				//values[5] = CStringGetTextDatum(unit_str);
+				nulls[5] = false;
+			}
+
+			tuplestore_putvalues(tupstore, tupdesc, values, nulls);
+
+                        i = 0;
+                        elog(LOG, "================= new line ====================");
+                }
+
+		token_start = token_next + 1;
+		elog(LOG, "token_start = %p buf + total_length = %p", token_start, buf + total_length);
+		if (token_start >= buf + total_length)
+			break;
+
+                token_next = strchr(token_next + 1,'|');
+        }
+	
+	tuplestore_donestoring(tupstore);
+
+	pfree(buf);
+	MemoryContextSwitchTo(oldcontext);
+
+	if (debug)
+		elog(LOG, "returning from pg_progress");
+
+	return (Datum) 0;
+}
+
+/*
+ * ProgressSendRequest:
+ * 	Log a request to a backend in order to fetch its progress log
+ *	This is initaited by the SQL command: PROGRESS pid.
+ */
+void ProgressSendRequest(int pid, int bid, int verbose, char* buf)
+{
+	//BackendId bid;
+	ProgressCtl* req;			// Used for the request
+	unsigned int buf_len = 0;
+	unsigned int str_len = 0;
+	StringInfo str;
+
+	if (debug)
+		elog(LOG, "Start of ProgressSendRequest");
+
 	/*
 	 * Serialize signals/request to get the progress state of the query
 	 */
@@ -449,30 +578,47 @@ void ProgressSendRequest(int pid, int verbose, char* buf)
 	req = progress_ctl_array + bid;
 	ProgressResetRequest(req);
 	req->verbose = verbose;
+	req->lineid = 0;
 	ProgressDumpRequest(req);
 
 	OwnLatch(req->latch);
 	ResetLatch(req->latch);
 
 	SendProcSignal(pid, PROCSIG_PROGRESS, bid);
+	if (debug)
+		elog(LOG, "waiting on latch");
+
 	WaitLatch(req->latch, WL_LATCH_SET | WL_TIMEOUT , PROGRESS_TIMEOUT * 1000L, WAIT_EVENT_PROGRESS);
 	DisownLatch(req->latch);
+	if (debug)
+		elog(LOG, "finish latch wait");
 
 	/* Fetch result and clear SHM buffer */
 	if (strlen(req->buf) == 0) {
 		/* We have timed out on PROGRESS_TIMEOUT */
 		progress_did_timeout = 1;	
-		memcpy(buf, progress_backend_timeout, strlen(progress_backend_timeout));
+		if (debug)
+			elog(LOG, "did timeout");
+
+		str = makeStringInfo();
+		ProgressPropTextStr(str, pid, 0, 0, "status", progress_backend_timeout);		
+		str_len = strlen(str->data);
+		memcpy(buf, str->data, str_len);
 	} else {
 		/* We have a result computed by the monitored backend */
 		buf_len = strlen(req->buf);
 		memcpy(buf, req->buf, buf_len);
 	}
 
+	if (debug)
+		elog(LOG, "buf: %s", buf);
+
 	/*
 	 * Clear shm buffer
 	 */
 	memset(req->buf, 0, PROGRESS_AREA_SIZE);
+	if (debug)
+		elog(LOG, "cleared shm buf");
 
 	/*
 	 * End serialization
@@ -511,8 +657,8 @@ ProgressState* CreateProgressState(void)
 static
 void ProgressDumpRequest(ProgressCtl* req)
 {
-	elog(LOG, "backend bid=%d pid=%d, verbose=%d, indent=%d, parallel=%d child=%d",
-		MyBackendId, getpid(), req->verbose, req->child_indent, req->parallel, req->child);
+	elog(LOG, "backend bid=%d pid=%d, verbose=%d, indent=%d, parallel=%d child=%di lineid=%d",
+		MyBackendId, getpid(), req->verbose, req->child_indent, req->parallel, req->child, req->lineid);
 }
 
 static
@@ -524,6 +670,7 @@ void ProgressResetRequest(ProgressCtl* req)
 	req->child = false;
 	req->child_indent = 0;
 	req->disk_size = 0;
+	req->lineid = 0;
 
 	InitSharedLatch(req->latch);
 	memset(req->buf, 0, PROGRESS_AREA_SIZE);
@@ -547,6 +694,9 @@ void HandleProgressRequest(void)
 	char* shmBufferTooShort = "shm buffer is too small";
 	bool child = false;
 
+	if (debug)
+		elog(LOG, "request received");
+
 	/*
 	 * We hold interrupt here because the current SQL query could be cancelled at any time. In which 
 	 * case, the current backend would not call SetLatch(). Monitoring backend would wait endlessly.
@@ -563,7 +713,7 @@ void HandleProgressRequest(void)
 	oldcontext = MemoryContextSwitchTo(progress_context);
 
 	ps = CreateProgressState();
-	ps->memcontext = progress_context;
+	ps->memcontext = progress_context;		// TODO: remove this useless field
 
 	Assert(ps != NULL);
 	Assert(ps->str != NULL);
@@ -575,48 +725,89 @@ void HandleProgressRequest(void)
 	ps->verbose = req->verbose;
 	ps->child = req->child;
 	ps->indent = req->child_indent;
+	ps->lineid = req->lineid;
 	ps->disk_size = 0;
+	ps->pid = getpid();
 
 	/* Local params */
 	child = req->child;
 
 	if (debug)
+		elog(LOG, "Step 0");
+
+	if (debug)
 		ProgressDumpRequest(req);
 
+	if (debug)
+		elog(LOG, "Step 1");
+
 	/*
-	 * Clear previous content of ps->str
+	 * Only clear previous content of ps->str
 	 */
 	ProgressResetReport(ps);
 
+	if (debug)
+		elog(LOG, "Step 2");
+
 	if (MyQueryDesc == NULL) {
 		ProgressPropText(ps, "status", "<idle backend>");
+		if (debug)
+			elog(LOG, "<idle backend>");
 	} else if (!IsTransactionState()) {
+		if (debug)
+			elog(LOG, "<out of transaction>");
 		ProgressPropText(ps, "status", "<out of transaction>");
 	} else if (MyQueryDesc->plannedstmt == NULL) {
+		if (debug)
+			elog(LOG, "<NULL planned statement>");
 		ProgressPropText(ps, "status", "<NULL planned statement>");
 	} else if (MyQueryDesc->plannedstmt->commandType == CMD_UTILITY) {
+		if (debug)
+			elog(LOG, "<utility statement>");
 		ProgressPropText(ps, "status", "<utility statement>");
 	} else if (MyQueryDesc->already_executed == false) {
+		if (debug)
+			elog(LOG, "<query not yet started>");
 		ProgressPropText(ps, "status", "<query not yet started>");
 	} else if (QueryCancelPending) {
+		if (debug)
+			elog(LOG, "<query cancel pending>");
 		ProgressPropText(ps, "status", "<query cancel pending>");
 	} else if (RecoveryConflictPending) {
+		if (debug)
+			elog(LOG, "<recovery conflict pending>");
 		ProgressPropText(ps, "status", "<recovery conflict pending>");
 	} else if (ProcDiePending) {
+		if (debug)
+			elog(LOG, "<proc die pending>");
 		ProgressPropText(ps, "status", "<proc die pending>");
 	} else {
+		if (debug)
+			elog(LOG, "<query running>");
 		if (!child)
 			ProgressPropText(ps, "status", "<query running>");
 
 		running = 1;
 	}
 
-	if (log_stmt && !child) {
+	if (debug)
+		elog(LOG, "Step 3");
+
+	if (log_stmt && !child && running) {
+		if (debug)
+			elog(LOG, "Main worker: %s", MyQueryDesc->sourceText);
+
 		if (MyQueryDesc != NULL && MyQueryDesc->sourceText != NULL)
 			ProgressPropText(ps, "query", MyQueryDesc->sourceText);
 	}
 
+	if (debug)
+		elog(LOG, "Step 4");
+
 	if (running) {
+		if (debug)
+			elog(LOG, "running");
+
 		if (!child)
 			ReportTime(MyQueryDesc, ps);
 
@@ -629,9 +820,15 @@ void HandleProgressRequest(void)
 			ReportDisk(ps); 	/* must come after ProgressPlan() */
 	}
 
+	if (debug)
+		elog(LOG, "Step 5");
+
 	/* 
 	 * Dump in SHM the string buffer content
 	 */
+	if (debug)
+		elog(LOG, "dumping string buffer in shm");
+
 	if (strlen(ps->str->data) < PROGRESS_AREA_SIZE) {
 		/* Mind the '\0' char at the end of the string */
 		memcpy(req->buf, ps->str->data, strlen(ps->str->data) + 1); 
@@ -643,8 +840,14 @@ void HandleProgressRequest(void)
 	/* Dump disk size used for stores, sorts, and hashes */
 	req->disk_size = ps->disk_size;
 
+	if (debug)
+		elog(LOG, "Step 6");
+
 	MemoryContextSwitchTo(oldcontext);
 	MemoryContextDelete(ps->memcontext);
+
+	if (debug)
+		elog(LOG, "setting latch");
 	
 	SetLatch(req->latch);		// Notify of progress state delivery
 	RESUME_INTERRUPTS();

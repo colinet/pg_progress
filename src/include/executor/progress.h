@@ -29,7 +29,7 @@ extern volatile bool progress_requested;
  * global parameters in local backend memory
  */
 extern StringInfo progress_str;
-extern ReportState* progress_state;
+//extern ReportState* progress_state;
 
 /*
  * Init and Fini functions
@@ -40,7 +40,7 @@ extern void ProgressShmemInit(void);
 /* 
  * external functions
  */
-extern void ProgressSendRequest(int pid, int verbose, char* buf);
+extern void ProgressSendRequest(int pid, int bid, int verbose, char* buf);
 extern void HandleProgressSignal(void);
 extern void HandleProgressRequest(void);
 
