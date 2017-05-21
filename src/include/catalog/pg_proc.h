@@ -2830,6 +2830,8 @@ DATA(insert OID = 2022 (  pg_stat_get_activity			PGNSP PGUID 12 1 100 0 0 f f f 
 DESCR("statistics: information about currently active backends");
 DATA(insert OID = 3318 (  pg_stat_get_progress_info			  PGNSP PGUID 12 1 100 0 0 f f f f t t s r 1 0 2249 "25" "{25,23,26,26,20,20,20,20,20,20,20,20,20,20}" "{i,o,o,o,o,o,o,o,o,o,o,o,o,o}" "{cmdtype,pid,datid,relid,param1,param2,param3,param4,param5,param6,param7,param8,param9,param10}" _null_ _null_ pg_stat_get_progress_info _null_ _null_ _null_ ));
 DESCR("statistics: information about progress of backends running maintenance command");
+DATA(insert OID = 776 (  pg_rco			  PGNSP PGUID 12 1 100 0 0 f f f f t t s r 2 0 2249 "23 23" "{23,23,23,25,25,25}" "{o,o,o,o,o,o}" "{pid,lineid,indent,property,value,unit}" _null_ _null_ pg_rco _null_ _null_ _null_ ));
+DESCR("rco: test SQL queries");
 DATA(insert OID = 3403 (  pg_progress			  PGNSP PGUID 12 1 100 0 0 f f f f t t s r 2 0 2249 "23 23" "{23,23,23,23,23,25,25,25}" "{i,i,o,o,o,o,o,o}" "{pid,verbose,pid,lineid,indent,property,value,unit}" _null_ _null_ pg_progress _null_ _null_ _null_ ));
 DESCR("progress: progression report about long running SQL queries");
 DATA(insert OID = 3099 (  pg_stat_get_wal_senders	PGNSP PGUID 12 1 10 0 0 f f f f f t s r 0 0 2249 "" "{23,25,3220,3220,3220,3220,1186,1186,1186,23,25}" "{o,o,o,o,o,o,o,o,o,o,o}" "{pid,state,sent_location,write_location,flush_location,replay_location,write_lag,flush_lag,replay_lag,sync_priority,sync_state}" _null_ _null_ pg_stat_get_wal_senders _null_ _null_ _null_ ));

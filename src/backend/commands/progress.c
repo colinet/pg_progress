@@ -334,6 +334,78 @@ void ProgressResetReport(ProgressState* ps)
 /*
  * Colums are: pid, lineid, indent, property, value, unit
  */
+Datum pg_rco(PG_FUNCTION_ARGS)
+{
+	int pid;
+	unsigned short verbose;
+
+	Datum values[PG_PROGRESS_COLS];
+	bool nulls[PG_PROGRESS_COLS];
+
+	TupleDesc tupdesc;
+	Tuplestorestate* tupstore;
+	ReturnSetInfo* rsinfo;
+
+	if (debug)
+		elog(LOG, "pg_rco");
+
+	/*
+	 * pid = 0 means collect progress report for all backends
+	 */
+	pid = PG_ARGISNULL(0) ? 0 : PG_GETARG_INT32(0);
+	verbose = PG_ARGISNULL(0) ? false : PG_GETARG_UINT16(1);
+	if (debug)
+		elog(LOG, "pid = %d, verbose = %d", pid, verbose);
+	
+	/*
+	 * Build a tuple descriptor for our result type
+	 */
+	if (get_call_result_type(fcinfo, NULL, &tupdesc) != TYPEFUNC_COMPOSITE) {
+		elog(ERROR, "return type must be a row type");
+	}
+
+	/*
+	 * Switch to query memory context
+	 */
+	rsinfo = (ReturnSetInfo*) fcinfo->resultinfo;
+	tupstore = tuplestore_begin_heap(true, false, work_mem);
+	rsinfo->returnMode = SFRM_Materialize;
+	rsinfo->setResult = tupstore;
+	rsinfo->setDesc = tupdesc;
+
+	MemSet(values, 0, sizeof(values));
+	MemSet(nulls, 0, sizeof(nulls));
+
+	values[0] = Int32GetDatum(1);
+	nulls[0] = false;
+
+	values[1] = Int32GetDatum(2);
+	nulls[1] = false;
+
+	values[2] = Int32GetDatum(3);
+	nulls[2] = false;
+
+	values[3] = CStringGetTextDatum("property");
+	nulls[3] = false;
+
+	values[4] = CStringGetTextDatum("value");
+	nulls[4] = false;
+
+	values[5] = CStringGetTextDatum("unit");
+	nulls[5] = false;
+
+	tuplestore_putvalues(tupstore, tupdesc, values, nulls);
+	tuplestore_donestoring(tupstore);
+
+	if (debug)
+		elog(LOG, "returning from pg_rco");
+
+	return (Datum) 0;
+}
+
+/*
+ * Colums are: pid, lineid, indent, property, value, unit
+ */
 Datum pg_progress(PG_FUNCTION_ARGS)
 {
 	int pid;
@@ -509,23 +581,20 @@ Datum pg_progress(PG_FUNCTION_ARGS)
 			nulls[2] = false;
 
 			/* PK */
-			values[3] = CStringGetTextDatum("property");
-			//values[3] = CStringGetTextDatum(prop_str);
+			values[3] = CStringGetTextDatum(prop_str);
 			nulls[3] = false;
 
 			if (strlen(value_str) == 0) {
 				nulls[4] = true;
 			} else {
-				values[4] = CStringGetTextDatum("value");
-				//values[4] = CStringGetTextDatum(value_str);
+				values[4] = CStringGetTextDatum(value_str);
 				nulls[4] = false;
 			}
 
 			if (strlen(unit_str) == 0) {
 				nulls[5] = true;
 			} else {
-				values[5] = CStringGetTextDatum("unit");
-				//values[5] = CStringGetTextDatum(unit_str);
+				values[5] = CStringGetTextDatum(unit_str);
 				nulls[5] = false;
 			}
 
@@ -844,7 +913,7 @@ void HandleProgressRequest(void)
 		elog(LOG, "Step 6");
 
 	MemoryContextSwitchTo(oldcontext);
-	MemoryContextDelete(ps->memcontext);
+	MemoryContextDelete(memcontext);
 
 	if (debug)
 		elog(LOG, "setting latch");
