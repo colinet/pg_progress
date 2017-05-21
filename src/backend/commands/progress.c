@@ -68,6 +68,11 @@ unsigned short progress_did_timeout = 0;
 char* progress_backend_timeout = "<backend timeout>";
 
 /*
+ * Report only SQL querries which have been running longer than 3 seconds
+ */
+unsigned long time_threshold = 3;
+
+/*
  * Backend type (single worker, parallel main worker, parallel child worker
  */
 #define SINGLE_WORKER	0
@@ -202,6 +207,8 @@ static void ProgressPropText(ProgressState* ps, const char* prop, const char* va
 static void ProgressPropTextStr(StringInfo str, int pid, int lineid, int indent, const char* prop, const char* value);
 
 static ProgressState* CreateProgressState(void);
+static void ProgressIndent(ProgressState* ps);
+static void ProgressUnindent(ProgressState* ps);
 
 
 
@@ -436,15 +443,11 @@ Datum pg_progress(PG_FUNCTION_ARGS)
 	char value_str[17];
 	char unit_str[9];
 
-	char* test;
-
 	char* token_start;
 	char* token_next;
 	unsigned short token_length;
 	unsigned short total_length;
 	int i;
-
-	//	int pid_index;
 
 	if (debug)
 		elog(LOG, "Start of pg_progress");
@@ -498,7 +501,7 @@ Datum pg_progress(PG_FUNCTION_ARGS)
 	 */
 	if (debug) {
 		elog(LOG, "setting up tuplestore");
-		elog(LOG, "bug content: %s", buf);
+		elog(LOG, "buffer content: %s", buf);
 	}
 
 	tupstore = tuplestore_begin_heap(true, false, work_mem);
@@ -509,56 +512,41 @@ Datum pg_progress(PG_FUNCTION_ARGS)
 	MemSet(values, 0, sizeof(values));
 	MemSet(nulls, 0, sizeof(nulls));
 
-	if (debug) {
-		elog(LOG, "final buffer: %s", buf);
-	}
-
 	token_start = buf;
 	token_next = buf;
 
 	token_next = strchr(token_start, '|');
 	total_length = strlen(buf);
 	
-	elog(LOG, "total length = %d", total_length);
 	i = 0;
-
-	test = palloc0(100);
-	memcpy(test, "AAABBB", 6);
 
 	while (token_start != NULL) {
 		token_length = (unsigned short)(token_next - token_start);
-		elog(LOG, "START ========== field %d ============== token_length = %d", i, token_length);
 
 		switch(i) {
                 case 0:
                         snprintf(pid_str, token_length + 1, "%s", token_start);
                         pid_str[token_length + 1] = '\0';
-                        elog(LOG, "pid = %s\n", pid_str);
                         break;
                 case 1:
                         snprintf(lineid_str, token_length + 1, "%s", token_start);
                         lineid_str[token_length + 1] = '\0';
-                        elog(LOG, "lineid_str = %s\n", lineid_str);
                         break;
                 case 2:
                         snprintf(indent_str, token_length + 1, "%s", token_start);
                         indent_str[token_length + 1] = '\0';
-                        elog(LOG, "indent_str = %s\n", indent_str);
                         break;
                 case 3:
                         snprintf(prop_str, token_length + 1, "%s", token_start);
                         prop_str[token_length + 1] = '\0';
-                        elog(LOG, "prop_str = %s\n", prop_str);
                         break;
                 case 4:
                         snprintf(value_str, token_length + 1, "%s", token_start);
                         value_str[token_length + 1] = '\0';
-                        elog(LOG, "value_str = %s\n", value_str);
                         break;
                 case 5:
                         snprintf(unit_str, token_length + 1, "%s", token_start);
                         unit_str[token_length + 1] = '\0';
-                        elog(LOG, "unit_str = %s\n", unit_str);
                         break;
                 };
 
@@ -599,13 +587,10 @@ Datum pg_progress(PG_FUNCTION_ARGS)
 			}
 
 			tuplestore_putvalues(tupstore, tupdesc, values, nulls);
-
                         i = 0;
-                        elog(LOG, "================= new line ====================");
                 }
 
 		token_start = token_next + 1;
-		elog(LOG, "token_start = %p buf + total_length = %p", token_start, buf + total_length);
 		if (token_start >= buf + total_length)
 			break;
 
@@ -617,9 +602,6 @@ Datum pg_progress(PG_FUNCTION_ARGS)
 	pfree(buf);
 	MemoryContextSwitchTo(oldcontext);
 
-	if (debug)
-		elog(LOG, "returning from pg_progress");
-
 	return (Datum) 0;
 }
 
@@ -630,7 +612,6 @@ Datum pg_progress(PG_FUNCTION_ARGS)
  */
 void ProgressSendRequest(int pid, int bid, int verbose, char* buf)
 {
-	//BackendId bid;
 	ProgressCtl* req;			// Used for the request
 	unsigned int buf_len = 0;
 	unsigned int str_len = 0;
@@ -666,9 +647,6 @@ void ProgressSendRequest(int pid, int bid, int verbose, char* buf)
 	if (strlen(req->buf) == 0) {
 		/* We have timed out on PROGRESS_TIMEOUT */
 		progress_did_timeout = 1;	
-		if (debug)
-			elog(LOG, "did timeout");
-
 		str = makeStringInfo();
 		ProgressPropTextStr(str, pid, 0, 0, "status", progress_backend_timeout);		
 		str_len = strlen(str->data);
@@ -724,10 +702,23 @@ ProgressState* CreateProgressState(void)
 }
 
 static
+void ProgressIndent(ProgressState* ps)
+{
+	ps->indent++;
+}
+
+static
+void ProgressUnindent(ProgressState* ps)
+{
+	ps->indent--;
+}
+
+static
 void ProgressDumpRequest(ProgressCtl* req)
 {
 	elog(LOG, "backend bid=%d pid=%d, verbose=%d, indent=%d, parallel=%d child=%di lineid=%d",
-		MyBackendId, getpid(), req->verbose, req->child_indent, req->parallel, req->child, req->lineid);
+		MyBackendId, getpid(), req->verbose, req->child_indent,
+		req->parallel, req->child, req->lineid);
 }
 
 static
@@ -778,7 +769,8 @@ void HandleProgressRequest(void)
 	 */
 	HOLD_INTERRUPTS();
 
-	progress_context =  AllocSetContextCreate(CurrentMemoryContext, "ProgressState", ALLOCSET_DEFAULT_SIZES);
+	progress_context =  AllocSetContextCreate(CurrentMemoryContext,
+				"ProgressState", ALLOCSET_DEFAULT_SIZES);
 	oldcontext = MemoryContextSwitchTo(progress_context);
 
 	ps = CreateProgressState();
@@ -802,65 +794,34 @@ void HandleProgressRequest(void)
 	child = req->child;
 
 	if (debug)
-		elog(LOG, "Step 0");
-
-	if (debug)
 		ProgressDumpRequest(req);
-
-	if (debug)
-		elog(LOG, "Step 1");
 
 	/*
 	 * Only clear previous content of ps->str
 	 */
 	ProgressResetReport(ps);
 
-	if (debug)
-		elog(LOG, "Step 2");
-
 	if (MyQueryDesc == NULL) {
 		ProgressPropText(ps, "status", "<idle backend>");
-		if (debug)
-			elog(LOG, "<idle backend>");
 	} else if (!IsTransactionState()) {
-		if (debug)
-			elog(LOG, "<out of transaction>");
 		ProgressPropText(ps, "status", "<out of transaction>");
 	} else if (MyQueryDesc->plannedstmt == NULL) {
-		if (debug)
-			elog(LOG, "<NULL planned statement>");
 		ProgressPropText(ps, "status", "<NULL planned statement>");
 	} else if (MyQueryDesc->plannedstmt->commandType == CMD_UTILITY) {
-		if (debug)
-			elog(LOG, "<utility statement>");
 		ProgressPropText(ps, "status", "<utility statement>");
 	} else if (MyQueryDesc->already_executed == false) {
-		if (debug)
-			elog(LOG, "<query not yet started>");
 		ProgressPropText(ps, "status", "<query not yet started>");
 	} else if (QueryCancelPending) {
-		if (debug)
-			elog(LOG, "<query cancel pending>");
 		ProgressPropText(ps, "status", "<query cancel pending>");
 	} else if (RecoveryConflictPending) {
-		if (debug)
-			elog(LOG, "<recovery conflict pending>");
 		ProgressPropText(ps, "status", "<recovery conflict pending>");
 	} else if (ProcDiePending) {
-		if (debug)
-			elog(LOG, "<proc die pending>");
 		ProgressPropText(ps, "status", "<proc die pending>");
 	} else {
-		if (debug)
-			elog(LOG, "<query running>");
+		running = 1;
 		if (!child)
 			ProgressPropText(ps, "status", "<query running>");
-
-		running = 1;
 	}
-
-	if (debug)
-		elog(LOG, "Step 3");
 
 	if (log_stmt && !child && running) {
 		if (debug)
@@ -870,13 +831,7 @@ void HandleProgressRequest(void)
 			ProgressPropText(ps, "query", MyQueryDesc->sourceText);
 	}
 
-	if (debug)
-		elog(LOG, "Step 4");
-
 	if (running) {
-		if (debug)
-			elog(LOG, "running");
-
 		if (!child)
 			ReportTime(MyQueryDesc, ps);
 
@@ -889,15 +844,9 @@ void HandleProgressRequest(void)
 			ReportDisk(ps); 	/* must come after ProgressPlan() */
 	}
 
-	if (debug)
-		elog(LOG, "Step 5");
-
 	/* 
 	 * Dump in SHM the string buffer content
 	 */
-	if (debug)
-		elog(LOG, "dumping string buffer in shm");
-
 	if (strlen(ps->str->data) < PROGRESS_AREA_SIZE) {
 		/* Mind the '\0' char at the end of the string */
 		memcpy(req->buf, ps->str->data, strlen(ps->str->data) + 1); 
@@ -909,11 +858,8 @@ void HandleProgressRequest(void)
 	/* Dump disk size used for stores, sorts, and hashes */
 	req->disk_size = ps->disk_size;
 
-	if (debug)
-		elog(LOG, "Step 6");
-
 	MemoryContextSwitchTo(oldcontext);
-	MemoryContextDelete(memcontext);
+	MemoryContextDelete(ps->memcontext);
 
 	if (debug)
 		elog(LOG, "setting latch");
@@ -962,12 +908,12 @@ void ProgressPlan(
 		planstate = outerPlanState(planstate);
 	}
 
-	if (ps->child)
+	if (ps->parallel && ps->child)
 		ProgressNode(planstate, NIL, "child worker", NULL, ps);
-	else if (ps->parallel)
+	else if (ps->parallel && !ps->child)
 		ProgressNode(planstate, NIL, "main worker", NULL, ps);
 	else
-		ProgressNode(planstate, NIL, "single worker", NULL, ps);
+		ProgressNode(planstate, NIL, NULL, NULL, ps);
 }
 	
 /*
@@ -987,7 +933,6 @@ void ProgressNode(
 {
 	Plan* plan = planstate->plan;
 	PlanInfo info;
-	int save_indent = ps->indent;
 	bool haschildren;
 	int ret;
 
@@ -1003,16 +948,20 @@ void ProgressNode(
 		elog(LOG, "unknown node type for plan");
 	}
 
-	ProgressPropText(ps, "node", relationship != NULL ? relationship : "progress");
+	ProgressPropText(ps, "node relationship",
+		relationship != NULL ? relationship : "progress");
+	ProgressIndent(ps);
 
+	/*
 	if (ps->parallel && !ps->parallel_reported) {
 		if (ps->child)
-			ProgressPropLong(ps, "worker child", getpid(), "");
+			ProgressPropLong(ps, "child pid", getpid(), "");
 		else
 			ProgressPropLong(ps, "worker parent", getpid(), "");
 	
 		ps->parallel_reported = true;
 	}
+*/
 
 	/*
 	 * Report node top properties
@@ -1023,7 +972,7 @@ void ProgressNode(
 
 	if (plan->parallel_aware)
 		ProgressPropText(ps, "node mode", "parallel");
-                 
+          
 	/*
 	 * Second step
 	 */
@@ -1306,21 +1255,16 @@ void ProgressNode(
 	/*
 	 * subPlan-s
 	 */
-//	if (planstate->subPlan) {
+//	if (planstate->subPlan)
 //		ReportSubPlans(planstate->subPlan, ancestors, "SubPlan", ps, ProgressNode);
-//	}
 
 	/*
 	 * end of child plans
 	 */
-	if (haschildren) {
+	if (haschildren)
 		ancestors = list_delete_first(ancestors);
-	}
 
-	/*
-	 * in text format, undo whatever indentation we added
-	 */
-	ps->indent = save_indent;
+	ProgressUnindent(ps);
 }
 
 
@@ -1397,7 +1341,8 @@ void ProgressParallelExecInfo(ParallelContext* pc, ProgressState* ps)
 		ResetLatch(req->latch);
 
 		SendProcSignal(pid, PROCSIG_PROGRESS, bid);
-		WaitLatch(req->latch, WL_LATCH_SET | WL_TIMEOUT , PROGRESS_TIMEOUT_CHILD * 1000L, WAIT_EVENT_PROGRESS);
+		WaitLatch(req->latch, WL_LATCH_SET | WL_TIMEOUT,
+			PROGRESS_TIMEOUT_CHILD * 1000L, WAIT_EVENT_PROGRESS);
 		DisownLatch(req->latch);
 
 		/* Fetch result */
@@ -1405,9 +1350,6 @@ void ProgressParallelExecInfo(ParallelContext* pc, ProgressState* ps)
 		lbuf  = palloc0(PROGRESS_AREA_SIZE);
 		if (shmbuf_len == 0) {
 			/* We have timed out on PROGRESS_TIMEOUT */
-			if (debug)
-				elog(LOG, "Did a timeout");
-
 			ProgressPropText(ps, "status", progress_backend_timeout);
 		} else {
 			/* We have a result computed by the monitored backend */
