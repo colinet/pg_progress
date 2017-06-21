@@ -2897,6 +2897,17 @@ static struct config_int ConfigureNamesInt[] =
 		NULL, NULL, NULL
 	},
 
+	{
+		{"progress_timeout", PGC_SIGHUP, STATS_MONITORING, 
+			gettext_noop("Maximum time to wait for response of monitored backend."),
+			NULL,
+			GUC_UNIT_S
+		},
+		&progress_timeout,
+		5, 1, 60,
+		NULL, NULL, NULL
+	},
+
 	/* End-of-list marker */
 	{
 		{NULL, 0, 0, NULL, NULL}, NULL, 0, 0, 0, NULL, NULL, NULL

@@ -61,7 +61,7 @@ char* progress_buf;
 unsigned int progress_buf_len;
 
 /* 
- * Monitoring progress waits 5secs for monitored backend response.
+ * Monitoring progress waits 5 seconds for monitored backend response, by default (Guc parameter).
  *
  * If this timeout is too short, it may not leave enough time for monotored backend to dump its
  * progression about the SQL query it is running.
@@ -69,7 +69,7 @@ unsigned int progress_buf_len;
  * If this timeout is too long, a cancelled SQL query in a backend could block the monitoring
  * backend too for a longi time.
  */
-unsigned short PROGRESS_TIMEOUT = 10;
+int progress_timeout = 5;
 
 char* msg_timeout		= "<backend timeout>";
 char* msg_idle			= "<idle backend>";
@@ -157,6 +157,8 @@ int progress_time_threshold = 3;
  * The LWLock ensure that one backend can be only monitored by one other backend at a time.
  * But monitoring backends can interleave their requests of progress report
  */
+#define MAX_WORKERS			MAX_PARALLEL_WORKER_LIMIT
+
 typedef struct ProgressCtl {
 	bool monitoring;		/* True if monitoring backend. Avoid cross monitoring */
         bool verbose;			/* Verbosity */
@@ -1006,7 +1008,7 @@ void ProgressSpecialPid(int pid, int bid, Tuplestorestate* tupstore, TupleDesc t
 }
 
 #define WAIT_FLAGS	(WL_LATCH_SET | WL_TIMEOUT)
-#define WAIT_TIMEOUT	(PROGRESS_TIMEOUT * 1000L)
+#define WAIT_TIMEOUT	(progress_timeout * 1000L)
 
 #define PREPARE_LATCH(req)		\
 	OwnLatch(&((req)->latch));		\
@@ -1099,7 +1101,7 @@ static char* ProgressFetchReport(int pid, int bid, int verbose,
 
 		switch(req->status) {
 		case PRG_CTL_STATUS_UNDEFINED: 
-                	/* We have timed out on PROGRESS_TIMEOUT */
+                	/* We have timed out on progress_timeout */
 			debug_fetcher("status=undefined");
                 	str = makeStringInfo();
                 	ProgressPropTextStr(str, pid, bid, 0, 0, PROP, "status", msg_timeout);
@@ -1223,7 +1225,7 @@ void HandleProgressRequest(void)
 	 * case, the current backend would not call SetLatch(). Monitoring backend would wait endlessly.
 	 *
 	 * To avoid such situation, a further safety measure has been added: the monitoring backend waits
-	 * the response for a maximum of PROGRESS_TIMEOUT time. After this timeout has expired, the monitoring
+	 * the response for a maximum of progress_timeout time. After this timeout has expired, the monitoring
 	 * backend sends back the respponse which is then empty.
 	 */
 	HOLD_INTERRUPTS();

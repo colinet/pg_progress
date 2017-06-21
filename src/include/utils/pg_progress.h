@@ -24,6 +24,7 @@ extern void ProgressShmemInit(void);
  * Report only SQL querries which have been running longer than this value.
  */
 extern int progress_time_threshold;
+extern int progress_timeout;
 
 /*
  * Has a progress report been requested
