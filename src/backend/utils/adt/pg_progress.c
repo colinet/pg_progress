@@ -127,30 +127,23 @@ char* msg_qry_running		= "<query running>";
 /*
  * Verbosity report level
  */
+#define VERBOSE_TIME_REPORT		1
+#define VERBOSE_DISK_USE		1
 
 #define VERBOSE_ROW_SCAN		2
 #define VERBOSE_INDEX_SCAN		2
-
 #define	VERBOSE_BUFFILE			2
-
 #define VERBOSE_HASH_JOIN		2
-#define VERBOSE_HASH_JOIN_DETAILED	3
-
 #define VERBOSE_TAPES			2
-#define VERBOSE_TAPES_DETAILED		3
-
-#define VERBOSE_TIME_REPORT		1
-#define VERBOSE_STACK			3
-#define VERBOSE_DISK_USE		1
-
-#define VERBOSE_TARGETS			3
-
 #define VERBOSE_BACKEND_SELF		2
 #define VERBOSE_BACKEND_OTHER		2
 #define VERBOSE_BACKEND_MONITOR		2
 
+#define VERBOSE_TARGETS			3
+#define VERBOSE_STACK			3
+#define VERBOSE_HASH_JOIN_DETAILED	3
+#define VERBOSE_TAPES_DETAILED		3
 #define VERBOSE_STMT			3
-
 
 /*
  * Report only SQL querries which have been running longer than this value
@@ -171,7 +164,7 @@ typedef struct ProgressCtl {
 	bool parallel;			/* true if parallel query */
 	bool child;			/* true if child worker, false if main worker */
 	unsigned int child_indent;	/* Indentation base value for child worker */
-	int child_pid[MAX_PARALLEL_WORKER_LIMIT];
+	int child_pid[MAX_WORKERS];
 
 	unsigned long disk_size;	/* Disk size in bytes used by the backend for sorts, stores, hashes */
 
@@ -190,7 +183,7 @@ typedef struct ProgressCtl {
 	int pid;
 } ProgressCtl;
 
-#define SIZE_OF_PID_ARRAY 		(MAX_PARALLEL_WORKER_LIMIT * sizeof(int))
+#define SIZE_OF_PID_ARRAY 		(MAX_WORKERS * sizeof(int))
 
 /* Command above */
 #define PRG_CTL_CMD_UNDEFINED		0	
@@ -417,7 +410,7 @@ void ProgressShmemInit(void)
 			LWLockInitialize(&req->lock, LWTRANCHE_PROGRESS);
 			req->proc_cnt = 0;	
 
-			memset(req->child_pid, 0, sizeof(int) * MAX_PARALLEL_WORKER_LIMIT);
+			memset(req->child_pid, 0, sizeof(int) * MAX_WORKERS);
 
 			req++;
 		}
@@ -475,7 +468,7 @@ void ProgressResetRequest(ProgressCtl* req)
 	memset(req->shm_page, 0, BLCKSZ);
 	req->shm_len = 0;
 
-	memset(req->child_pid, 0, sizeof(int) * MAX_PARALLEL_WORKER_LIMIT);
+	memset(req->child_pid, 0, sizeof(int) * MAX_WORKERS);
 }
 
 
@@ -697,7 +690,7 @@ Datum pg_progress(PG_FUNCTION_ARGS)
 			 */
 			if (pid == getpid()) {
 				debug_progress("backend is self");
-				if (verbose > VERBOSE_BACKEND_SELF)
+				if (verbose >= VERBOSE_BACKEND_SELF)
 					ProgressSpecialPid(pid, curr_backend, tupstore,
 						tupdesc, "<self backend>");
 
@@ -709,7 +702,7 @@ Datum pg_progress(PG_FUNCTION_ARGS)
 			 */
 			if (backend_type != B_BACKEND) {
 				debug_progress("backend is not standard");
-				if (verbose > VERBOSE_BACKEND_OTHER)
+				if (verbose >= VERBOSE_BACKEND_OTHER)
 					ProgressSpecialPid(pid, curr_backend, tupstore,
 						tupdesc, "<not a standard backend>");
 
@@ -721,7 +714,7 @@ Datum pg_progress(PG_FUNCTION_ARGS)
 			 */
 			if (ProgressTestMonitoringSelf(pid)) {
 				debug_progress("backend is monitor");
-				if (verbose > VERBOSE_BACKEND_MONITOR)
+				if (verbose >= VERBOSE_BACKEND_MONITOR)
 					ProgressSpecialPid(pid, curr_backend, tupstore,
 						tupdesc, "<monitoring backend>");
 
@@ -766,7 +759,7 @@ void ProgressMasterAndSlaves(int pid, int verbose,
 	int pid_index;	
 	int child_pid;	
 	int child_indent;
-	int child_pid_array[MAX_PARALLEL_WORKER_LIMIT];
+	int child_pid_array[MAX_WORKERS];
 
 	/* 
 	 * Collect progress report from master backend
@@ -976,7 +969,7 @@ void ProgressPid(int pid, int ppid, int verbose,
 	progress_buf = NULL;
 	progress_buf_len = 0;
 
-	elog(LOG, "Parser => end");
+	debug_parser("Parser end");
 }
 
 static
@@ -1031,10 +1024,7 @@ void ProgressSpecialPid(int pid, int bid, Tuplestorestate* tupstore, TupleDesc t
 
 static void ProgressLockRequest(ProgressCtl* req)
 {
-	elog(LOG, "%d TRY LOCK req at %p hold by %d", getpid(), req, req->pid);
-
 	LWLockAcquire(&(req->lock), LW_EXCLUSIVE);
-	elog(LOG, "LOCK req at %p by %d", req, getpid());
 	req->pid = getpid();
 	req->proc_cnt++;
 	Assert(req->proc_cnt == 1);
@@ -1045,7 +1035,6 @@ static void ProgressUnlockRequest(ProgressCtl* req)
 	Assert(req->proc_cnt == 1);
 	req->proc_cnt--;
 	LWLockRelease(&(req->lock));
-	elog(LOG, "UNLOCK req at %p from %d by %d", req, req->pid, getpid());
 	req->pid = 0;
 }
 
@@ -1285,7 +1274,7 @@ void HandleProgressRequest(void)
 	Assert(ps->str != NULL);
 	Assert(ps->str->data != NULL);
 
-	memset(req->child_pid, 0, sizeof(int) * MAX_PARALLEL_WORKER_LIMIT);
+	memset(req->child_pid, 0, sizeof(int) * MAX_WORKERS);
 
 	ps->verbose = req->verbose;
 	ps->parallel = req->parallel;
@@ -1330,7 +1319,7 @@ void HandleProgressRequest(void)
 	/*
 	 * Log SQL statement if requested by verbose level
 	 */
-	if (ps->verbose > VERBOSE_STMT
+	if (ps->verbose >= VERBOSE_STMT
 		&& !child
 		&& running) {
 		if (MyQueryDesc != NULL && MyQueryDesc->sourceText != NULL)
@@ -1341,7 +1330,7 @@ void HandleProgressRequest(void)
 		if (!child)
 			ReportTime(MyQueryDesc, ps);
 
-		if (ps->verbose > VERBOSE_STACK) {
+		if (ps->verbose >= VERBOSE_STACK) {
 			ReportStack(ps);
 		}
 
@@ -1351,7 +1340,7 @@ void HandleProgressRequest(void)
 		 * Disk use reporting must come after ProgressPlan() 
 		 * which collects actual disk use.
 		 */
-		if (ps->verbose > VERBOSE_DISK_USE
+		if (ps->verbose >=  VERBOSE_DISK_USE
 			&& !child) {
 			ReportDisk(ps);
 		}
@@ -2269,7 +2258,7 @@ void ProgressIndexScan(IndexScanState* is, ProgressState* ps)
 		return;
 	}
 
-	if (ps->verbose > VERBOSE_ROW_SCAN) {
+	if (ps->verbose >= VERBOSE_ROW_SCAN) {
 		ProgressPropLong(ps, PROP, "fetched", (long int) planstate.plan_rows, ROW_UNIT);
 		ProgressPropLong(ps, PROP, "total", (long int) p->plan_rows, ROW_UNIT);
 	}
