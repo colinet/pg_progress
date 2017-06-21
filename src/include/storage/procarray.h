@@ -89,6 +89,9 @@ extern RunningTransactions GetRunningTransactionData(void);
 
 extern bool TransactionIdIsInProgress(TransactionId xid);
 extern bool TransactionIdIsActive(TransactionId xid);
+
+extern BackendId ProcPidGetBackendId(int pid);
+
 extern TransactionId GetOldestXmin(Relation rel, int flags);
 extern TransactionId GetOldestActiveTransactionId(void);
 extern TransactionId GetOldestSafeDecodingTransactionId(bool catalogOnly);

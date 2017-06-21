@@ -33,11 +33,40 @@
 
 #include "executor/tuptable.h"
 
+/*
+ * Possible states of a Tuplestore object.  These denote the states that
+ * persist between calls of Tuplestore routines.
+ */
+typedef enum {
+	TSS_INMEM,              /* Tuples still fit in memory */
+	TSS_WRITEFILE,          /* Writing to temp file */
+	TSS_READFILE            /* Reading from temp file */
+} TupStoreStatus;
 
 /* Tuplestorestate is an opaque type whose details are not known outside
  * tuplestore.c.
  */
 typedef struct Tuplestorestate Tuplestorestate;
+
+/*
+ * Use dto fetch progress/status of Tuplestore
+ */
+struct tss_report {
+        int memtupcount;
+	int memtupskipped;
+	int memtupread;
+        int memtupdeleted;
+
+        int tuples_count;
+	int tuples_skipped;
+        int tuples_read;
+	int tuples_deleted;
+	int readptrcount;
+		
+	unsigned long disk_size;
+
+	int status;
+};
 
 /*
  * Currently we only need to store MinimalTuples, but it would be easy
@@ -69,6 +98,8 @@ extern void tuplestore_copy_read_pointer(Tuplestorestate *state,
 extern void tuplestore_trim(Tuplestorestate *state);
 
 extern bool tuplestore_in_memory(Tuplestorestate *state);
+extern unsigned int tuplestore_status(Tuplestorestate *state);
+
 
 extern bool tuplestore_gettupleslot(Tuplestorestate *state, bool forward,
 						bool copy, TupleTableSlot *slot);
@@ -87,5 +118,9 @@ extern void tuplestore_rescan(Tuplestorestate *state);
 extern void tuplestore_clear(Tuplestorestate *state);
 
 extern void tuplestore_end(Tuplestorestate *state);
+
+extern bool tuplestore_in_memory(Tuplestorestate *state);
+extern unsigned int tuplestore_status(Tuplestorestate *state);
+extern void tuplestore_get_state(Tuplestorestate *state, struct tss_report* tss);
 
 #endif   /* TUPLESTORE_H */

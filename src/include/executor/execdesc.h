@@ -50,6 +50,7 @@ typedef struct QueryDesc
 
 	/* This field is set by ExecutorRun */
 	bool		already_executed;		/* true if previously executed */
+	bool 		query_completed;		/* true if ExecutorRun() completed */
 
 	/* This is always set NULL by the core system, but plugins can change it */
 	struct Instrumentation *totaltime;	/* total time spent in ExecutorRun */
@@ -67,4 +68,6 @@ extern QueryDesc *CreateQueryDesc(PlannedStmt *plannedstmt,
 
 extern void FreeQueryDesc(QueryDesc *qdesc);
 
+extern PGDLLIMPORT QueryDesc* MyQueryDesc;
+extern PGDLLIMPORT bool IsQueryDescValid;
 #endif   /* EXECDESC_H  */

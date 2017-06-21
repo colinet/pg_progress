@@ -3197,9 +3197,8 @@ SELECT pg_stat_get_backend_pid(s.backendid) AS pid,
 
   <para>
    <productname>PostgreSQL</> has the ability to report the progress of
-   certain commands during command execution.  Currently, the only command
-   which supports progress reporting is <command>VACUUM</>.  This may be
-   expanded in the future.
+   commands during command execution whether they are standard SQL queries 
+   or utilities commands. 
   </para>
 
  <sect2 id="vacuum-progress-reporting">
@@ -3391,6 +3390,284 @@ SELECT pg_stat_get_backend_pid(s.backendid) AS pid,
   </table>
 
  </sect2>
+ <sect2 id="pg_progress-reporting">
+  <title>Progression report using pg_progress() SQL function</title>
+
+    <para>
+    <xref linkend="function-pg_progress"> shows the function
+    available to get the progress of long (having run more than 3 seconds by default) SQL queries and utilities running in backend processes.
+   </para>
+
+   <table id="function-pg_progress">
+    <title>Progress report function</title>
+    <tgroup cols="3">
+     <thead>
+      <row><entry>Name</entry> <entry>Return Type</entry> <entry>Description</entry></row>
+     </thead>
+
+     <tbody>
+      <row>
+       <entry>
+        <indexterm>
+         <primary>pg_progress</primary>
+        </indexterm>
+        <literal><function>pg_progress(<parameter>process_pid</parameter>,<parameter>verbosity</parameter>)</function></literal>
+       </entry>
+       <entry><type>row set</type></entry>
+       <entry>get progression of long running queries in backend processes</entry>
+      </row>
+     </tbody>
+    </tgroup>
+   </table>
+
+ <para>
+    The function <function>pg_progress</function> yields the progression of long running SQL
+    queries and utilities in backends whose pid is <parameter>process_pid</parameter> with the level of details 
+    specified by <parameter>verbosity</parameter>.
+ </para>
+ <para>
+    The <parameter>process_pid</parameter> parameter can be either a given pid of a backend, 
+    or the value 0 which means to fetch progress reports for all backends. Particular process pid can be found with pg_stat_activity() SQL function.
+    The <parameter>verbosity</parameter> controls the level of details exposed in the report. Values ranges from 0 to 3.
+ </para>
+  <para>
+   <function>pg_progress</function> returns rows describing long step nodes for the execution of SQL commands 
+   and utilities being run by backends processes. The rows fields are essentially name/value pairs
+  reflecting the progress of each long running node.
+  The name field is described by a type field. The value field is described by a unit field.
+ </para>
+  <table id="pg-progress-rows" xreflabel="pg-progress-rows">
+   <title><structname>pg_progress</structname> returned rows</title>
+   <tgroup cols="3">
+    <thead>
+    <row>
+      <entry>Column</entry>
+      <entry>Type</entry>
+      <entry>Description</entry>
+     </row>
+    </thead>
+
+   <tbody>
+    <row>
+     <entry><structfield>pid</></entry>
+     <entry><type>integer</></entry>
+     <entry>Process ID of the backend.</entry>
+    </row>
+    <row>
+     <entry><structfield>ppid</></entry>
+     <entry><type>integer</></entry>
+     <entry>Process ID of the master backend for parallel queries.</entry>
+    </row>
+    <row>
+     <entry><structfield>bid</></entry>
+     <entry><type>integer</></entry>
+     <entry>Backend ID of the backend.</entry>
+    </row>
+    <row>
+     <entry><structfield>lineid</></entry>
+     <entry><type>integer</></entry>
+     <entry>Line ID of the progress report for a given backend PID. The purpose of this field is to have 
+   an ordered output of the progress report, in order to reflect the tree structure of the query.</entry>
+    </row>
+    <row>
+     <entry><structfield>indent</></entry>
+     <entry><type>integer</></entry>
+     <entry>
+       Indentation level by increment of 1. The purpose of this field is to have
+   an indented output progress report, to reflect the tree structure of the query.
+     </entry>
+    </row>
+    <row>
+     <entry><structfield>type</></entry>
+     <entry><type>text</></entry>
+     <entry>
+       This is type of the name in the name/value pairs. This is mostly
+ nodes and properties.
+     </entry>
+    </row>
+    <row>
+     <entry><structfield>name</></entry>
+     <entry><type>text</></entry>
+     <entry>
+	Name of row reported.
+     </entry>
+    </row>
+    <row>
+     <entry><structfield>value</></entry>
+     <entry><type>test</></entry>
+     <entry>
+	Value assigned to the above name.
+     </entry>
+    </row>
+    <row>
+     <entry><structfield>unit</></entry>
+     <entry><type>text</></entry>
+     <entry>
+       Text representation of value unit. It may be empty when, for instance, value is a text node.
+     </entry>
+    </row>
+   </tbody>
+   </tgroup>
+  </table>
+
+ <para>
+Below output shows some samples of rows returned by <function>pg_progress()</function> with a table named t_10m containing 10 millions of rows. A large table is needed to make SeqScan, Sort, HashJoin and TupleStore long to execute. SQL queries or utilities having for less than 3 seconds are not reported by default.
+<programlisting>
+test=# CREATE TABLE T_10M ( id integer, md5 text);
+CREATE TABLE
+test=# INSERT INTO T_10M SELECT generate_series(1,10000000) AS id, md5(random()::text) AS md5;
+INSERT 0 10000000
+test=#
+</programlisting>
+</para>
+<para>
+No index is created initially on table t_10m.
+In one psql session, a long SQL query is launched
+<programlisting>
+[pgadm@localhost ~]$ psql -d test -p 5432 -A
+psql (10beta1)
+Type "help" for help.
+
+test=# \o file
+test=# select * from t_10m order by md5;
+</programlisting>
+ Mind the -A argument to prevent aligned output.
+
+</para>
+<para>
+ During the execution of the SQL query, an other psql session is used to monitor the 
+ progression of the above SQL query. Indent field is used below to make the output look like a tree of nodes.
+
+<programlisting>
+test=# SELECT  pid, ppid, bid, concat(repeat(' ', 3 * indent),name), value, unit FROM pg_progress(0,0);
+  pid  | ppid | bid |      concat      |      value       |  unit   
+-------+------+-----+------------------+------------------+---------
+ 14106 |    0 |   4 | status           | query running    | 
+ 14106 |    0 |   4 | relationship     | progression      | 
+ 14106 |    0 |   4 |    node name     | Sort             | 
+ 14106 |    0 |   4 |    sort status   | on tapes writing | 
+ 14106 |    0 |   4 |    completion    | 0                | percent
+ 14106 |    0 |   4 |    relationship  | Outer            | 
+ 14106 |    0 |   4 |       node name  | Seq Scan         | 
+ 14106 |    0 |   4 |       scan on    | t_10m            | 
+ 14106 |    0 |   4 |       fetched    | 25049            | block
+ 14106 |    0 |   4 |       total      | 83334            | block
+ 14106 |    0 |   4 |       completion | 30               | percent
+(11 rows)
+</programlisting>
+Above output shows the status of the SQL query, the relation of nodes in the execution tree, the nodes names and properties of each node.
+Top node is the query itself. Then down the top node, there is a sort node for which sort is being done on tapes because of the size of the sort. Leaf node is a table scan with properties such as the number of blocks already scanned, the total number of blocks to be scanned and the percentage of the scan already completed.
+</para>
+<para>
+ Parallel queries can be monitored by observing progress of both master and worker backends.
+In one psql session, run:
+<programlisting>
+[pgadm@localhost ~]$ psql -d test -p 5432 -A
+psql (10beta1)
+Type "help" for help.
+
+test=# \o file
+test=# select * from t_10m order by md5;
+</programlisting>
+</para>
+<para>
+The progress of execution in an other psql session shows:
+<programlisting>
+test=# SELECT  pid, ppid, bid, concat(repeat(' ', 3 * indent),name), value, unit FROM pg_progress(0,0);
+  pid  | ppid  | bid |       concat        |      value      |  unit   
+-------+-------+-----+---------------------+-----------------+---------
+ 26924 |     0 |   4 | status              | query running   | 
+ 26924 |     0 |   4 | relationship        | progression     | 
+ 26924 |     0 |   4 |    node name        | Gather Merge    | 
+ 26924 |     0 |   4 |    relationship     | Outer           | 
+ 26924 |     0 |   4 |       node name     | Sort            | 
+ 26924 |     0 |   4 |       completion    | 0               | percent
+ 26924 |     0 |   4 |       relationship  | Outer           | 
+ 26924 |     0 |   4 |          node name  | Seq Scan        | 
+ 26924 |     0 |   4 |          node mode  | parallel        | 
+ 26924 |     0 |   4 |          scan on    | t_10m           | 
+ 26924 |     0 |   4 |          scan mode  | parallel        | 
+ 26924 |     0 |   4 |          fetched    | 38231           | block
+ 26924 |     0 |   4 |          total      | 132403          | block
+ 26924 |     0 |   4 |          completion | 28              | percent
+ 26926 | 26924 |   6 |    relationship     | child worker    | 
+ 26926 | 26924 |   6 |       node name     | Sort            | 
+ 26926 | 26924 |   6 |       completion    | 0               | percent
+ 26926 | 26924 |   6 |       relationship  | Outer           | 
+ 26926 | 26924 |   6 |          node name  | Seq Scan        | 
+ 26926 | 26924 |   6 |          node mode  | parallel        | 
+ 26926 | 26924 |   6 |          scan on    | t_10m           | 
+ 26926 | 26924 |   6 |          scan mode  | parallel        | 
+ 26926 | 26924 |   6 |          fetched    | 38246           | block
+ 26926 | 26924 |   6 |          total      | 132403          | block
+ 26926 | 26924 |   6 |          completion | 28              | percent
+ 26925 | 26924 |   5 |    relationship     | child worker    | 
+ 26925 | 26924 |   5 |       node name     | Sort            | 
+ 26925 | 26924 |   5 |       completion    | 0               | percent
+ 26925 | 26924 |   5 |       relationship  | Outer           | 
+ 26925 | 26924 |   5 |          node name  | Seq Scan        | 
+ 26925 | 26924 |   5 |          node mode  | parallel        | 
+ 26925 | 26924 |   5 |          scan on    | t_10m           | 
+ 26925 | 26924 |   5 |          scan mode  | parallel        | 
+ 26925 | 26924 |   5 |          fetched    | 38283           | block
+ 26925 | 26924 |   5 |          total      | 132403          | block
+ 26925 | 26924 |   5 |          completion | 28              | percent
+(36 rows)
+
+test=# 
+</programlisting>
+The SQL query is run in parallel mode with 3 backends. The pid of the backends are 26924 (the pid of the master parallel process), 26926 and 26925 which are worker processes in the parallel execution of the SQL query.
+
+The rows provide the execution tree for the nodes which require a long time to complete. Such nodes are mostly SeqScan, Sort, TupleStore, HashJoin.
+</para>
+
+<para>
+Backends can be either idle, running, out of transaction, in recovery pending, in cancel pending, and in proc die pending. 
+<programlisting>
+test=# select * from pg_progress(0,1);
+ pid  | ppid | bid | lineid | indent |   type   |  name  |     value      | unit 
+------+------+-----+--------+--------+----------+--------+----------------+------
+ 2450 |    0 |   3 |      0 |      0 | property | status | idle backend   | 
+(1 row)
+</programlisting>
+</para>
+
+<para>
+The report is provided only when the query has been running for at least 3 seconds by default. This value is a GUC parameter named <parameter>progress_time_threshold</parameter>.
+<programlisting>
+test=# select * from pg_progress(0,1);
+ pid  | ppid | bid | lineid | indent |   type   |                   name                    | value | unit 
+------+------+-----+--------+--------+----------+-------------------------------------------+-------+------
+ 2450 |    0 |   3 |      0 |      0 | property | backend has run for less than 3 seconds   |       | 
+(1 row)
+</programlisting>
+</para>
+
+<para>
+The backends reported are specified by the 1st parameter of the function. This can be value 0 for all backends or the pid of a backend.
+The detail of the report is controlled by the 2nd parameters <parameter>verbosity</parameter>.
+</para>
+
+<para>
+Utilities such as CREATE INDEX can be reported.
+<programlisting>
+test=# SELECT  pid, ppid, bid, concat(repeat(' ', 3 * indent),name), value, unit FROM pg_progress(0,0);
+ pid  | ppid | bid |    concat     |               value               |  unit   
+------+------+-----+---------------+-----------------------------------+---------
+ 2450 |    0 |   3 | query         | CREATE INDEX i_10m ON t_10m(md5); | 
+ 2450 |    0 |   3 |    fetched    | 80941                             | block
+ 2450 |    0 |   3 |    total      | 132403                            | block
+ 2450 |    0 |   3 |    completion | 61                                | percent
+(4 rows)
+
+test=# 
+
+</programlisting>
+</para>
+
+
+ </sect2>
+
  </sect1>
 
  <sect1 id="dynamic-trace">

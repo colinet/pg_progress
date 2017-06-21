@@ -18,6 +18,7 @@
 #include <unistd.h>
 
 #include "access/parallel.h"
+#include "access/heapam.h"
 #include "commands/async.h"
 #include "miscadmin.h"
 #include "replication/walsender.h"
@@ -27,6 +28,7 @@
 #include "storage/shmem.h"
 #include "storage/sinval.h"
 #include "tcop/tcopprot.h"
+#include "utils/pg_progress.h"
 
 
 /*
@@ -291,6 +293,9 @@ procsignal_sigusr1_handler(SIGNAL_ARGS)
 
 	if (CheckProcSignal(PROCSIG_RECOVERY_CONFLICT_BUFFERPIN))
 		RecoveryConflictInterrupt(PROCSIG_RECOVERY_CONFLICT_BUFFERPIN);
+
+	if (CheckProcSignal(PROCSIG_PROGRESS))
+		HandleProgressSignal();
 
 	SetLatch(MyLatch);
 

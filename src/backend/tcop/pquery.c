@@ -96,6 +96,10 @@ CreateQueryDesc(PlannedStmt *plannedstmt,
 	/* not yet executed */
 	qd->already_executed = false;
 
+	/* Track the QueryDesc from global variables */
+	MyQueryDesc = qd;
+	IsQueryDescValid = true;
+
 	return qd;
 }
 
@@ -114,6 +118,9 @@ FreeQueryDesc(QueryDesc *qdesc)
 
 	/* Only the QueryDesc itself need be freed */
 	pfree(qdesc);
+
+	MyQueryDesc = NULL;
+	IsQueryDescValid = false;
 }
 
 

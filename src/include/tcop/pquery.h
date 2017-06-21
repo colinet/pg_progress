@@ -17,6 +17,7 @@
 #include "nodes/parsenodes.h"
 #include "utils/portal.h"
 
+extern bool RecoveryConflictPending;
 
 extern PGDLLIMPORT Portal ActivePortal;
 

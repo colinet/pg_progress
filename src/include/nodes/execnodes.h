@@ -819,6 +819,9 @@ typedef struct PlanState
 	Instrumentation *instrument;	/* Optional runtime stats for this node */
 	WorkerInstrumentation *worker_instrument;	/* per-worker instrumentation */
 
+        double plan_rows;		/* number of rows returned so far */
+	unsigned short percent_done;	/* percentage of execution computed so far */
+
 	/*
 	 * Common structural data for all Plan types.  These links to subsidiary
 	 * state trees parallel links in the associated plan tree (except for the

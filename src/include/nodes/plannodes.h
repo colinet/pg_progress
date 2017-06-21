@@ -173,6 +173,17 @@ typedef struct Plan
 #define innerPlan(node)			(((Plan *)(node))->righttree)
 #define outerPlan(node)			(((Plan *)(node))->lefttree)
 
+/*
+ * Structure used to fetch Plan node informations in text format
+ */
+typedef struct PlanInfo {
+	const char* pname;                     /* node type name for text output */
+	const char *sname;                     /* node type name for non-text output */
+        const char *strategy;
+        const char *partialmode;
+        const char *operation;
+        const char *custom_name;
+} PlanInfo;
 
 /* ----------------
  *	 Result node -

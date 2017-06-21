@@ -41,6 +41,7 @@
 #include "commands/vacuum.h"
 #include "commands/variable.h"
 #include "commands/trigger.h"
+#include "utils/pg_progress.h"
 #include "funcapi.h"
 #include "libpq/auth.h"
 #include "libpq/be-fsstubs.h"
@@ -2882,6 +2883,17 @@ static struct config_int ConfigureNamesInt[] =
 		},
 		&gin_pending_list_limit,
 		4096, 64, MAX_KILOBYTES,
+		NULL, NULL, NULL
+	},
+
+	{
+		{"progress_time_threshold", PGC_SIGHUP, STATS_MONITORING, 
+			gettext_noop("Minimum time before progression of SQL plan is collected."),
+			NULL,
+			GUC_UNIT_S
+		},
+		&progress_time_threshold,
+		3, 3, 30,
 		NULL, NULL, NULL
 	},
 

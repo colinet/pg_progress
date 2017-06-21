@@ -60,7 +60,6 @@ static void ExplainOneQuery(Query *query, int cursorOptions,
 static void report_triggers(ResultRelInfo *rInfo, bool show_relname,
 				ExplainState *es);
 static double elapsed_time(instr_time *starttime);
-static bool ExplainPreScanNode(PlanState *planstate, Bitmapset **rels_used);
 static void ExplainNode(PlanState *planstate, List *ancestors,
 			const char *relationship, const char *plan_name,
 			ExplainState *es);
@@ -784,7 +783,7 @@ elapsed_time(instr_time *starttime)
  * This ensures that we don't confusingly assign un-suffixed aliases to RTEs
  * that never appear in the EXPLAIN output (such as inheritance parents).
  */
-static bool
+bool
 ExplainPreScanNode(PlanState *planstate, Bitmapset **rels_used)
 {
 	Plan	   *plan = planstate->plan;

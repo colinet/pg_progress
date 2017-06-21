@@ -71,6 +71,7 @@
 #include "utils/tuplesort.h"
 #include "utils/snapmgr.h"
 #include "utils/tqual.h"
+#include "utils/pg_progress.h"
 
 
 /* Potentially set by pg_upgrade_support functions */
@@ -2291,6 +2292,11 @@ IndexBuildHeapRangeScan(Relation heapRelation,
 	reltuples = 0;
 
 	/*
+	 * Used to monitor CREATE INDEX command
+	 */
+	CreateIndexHeapScan = scan;
+
+	/*
 	 * Scan all tuples in the base relation.
 	 */
 	while ((heapTuple = heap_getnext(scan, ForwardScanDirection)) != NULL)
@@ -2604,6 +2610,11 @@ IndexBuildHeapRangeScan(Relation heapRelation,
 					 callback_state);
 		}
 	}
+
+	/*
+	 * Stop progress report of create index
+	 */
+	CreateIndexHeapScan = NULL;
 
 	heap_endscan(scan);
 

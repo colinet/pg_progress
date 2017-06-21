@@ -67,6 +67,7 @@
 #include "utils/acl.h"
 #include "utils/guc.h"
 #include "utils/syscache.h"
+#include "utils/pg_progress.h"
 
 
 /* Hook for plugins to get control in ProcessUtility() */
@@ -345,6 +346,12 @@ ProcessUtility(PlannedStmt *pstmt,
 	Assert(queryString != NULL);	/* required as of 8.4 */
 
 	/*
+	 * Used to track progress of utility statements
+	 */
+	MyUtilityPlannedStmt = pstmt;
+	MyUtilityQueryString = (char*) queryString;
+
+	/*
 	 * We provide a function hook variable that lets loadable plugins get
 	 * control when ProcessUtility is called.  Such a plugin would normally
 	 * call standard_ProcessUtility().
@@ -357,6 +364,9 @@ ProcessUtility(PlannedStmt *pstmt,
 		standard_ProcessUtility(pstmt, queryString,
 								context, params, queryEnv,
 								dest, completionTag);
+
+	MyUtilityPlannedStmt = NULL;
+	MyUtilityQueryString = NULL;
 }
 
 /*

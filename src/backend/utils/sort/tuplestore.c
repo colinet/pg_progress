@@ -66,17 +66,6 @@
 
 
 /*
- * Possible states of a Tuplestore object.  These denote the states that
- * persist between calls of Tuplestore routines.
- */
-typedef enum
-{
-	TSS_INMEM,					/* Tuples still fit in memory */
-	TSS_WRITEFILE,				/* Writing to temp file */
-	TSS_READFILE				/* Reading from temp file */
-} TupStoreStatus;
-
-/*
  * State for a single read pointer.  If we are in state INMEM then all the
  * read pointers' "current" fields denote the read positions.  In state
  * WRITEFILE, the file/offset fields denote the read positions.  In state
@@ -158,9 +147,11 @@ struct Tuplestorestate
 	 * includes the deleted pointers.
 	 */
 	void	  **memtuples;		/* array of pointers to palloc'd tuples */
-	int			memtupdeleted;	/* the first N slots are currently unused */
-	int			memtupcount;	/* number of tuples currently present */
-	int			memtupsize;		/* allocated length of memtuples array */
+	int		memtupcount;	/* number of tuples currently present */
+	int		memtupskipped;	/* number of tuples skipped */
+	int		memtupread;	/* number of tuples read */
+	int		memtupdeleted;	/* the first N slots are currently unused */
+	int		memtupsize;	/* allocated length of memtuples array */
 	bool		growmemtuples;	/* memtuples' growth still underway? */
 
 	/*
@@ -178,6 +169,11 @@ struct Tuplestorestate
 
 	int			writepos_file;	/* file# (valid if READFILE state) */
 	off_t		writepos_offset;	/* offset (valid if READFILE state) */
+
+	int	tuples_count;
+	int 	tuples_skipped;
+	int 	tuples_read;	/* may exceed tuples_count if multiple readers */
+	int	tuples_deleted;
 };
 
 #define COPYTUP(state,tup)	((*(state)->copytup) (state, tup))
@@ -268,6 +264,14 @@ tuplestore_begin_common(int eflags, bool interXact, int maxKBytes)
 
 	state->memtupdeleted = 0;
 	state->memtupcount = 0;
+	state->memtupskipped = 0;
+	state->memtupread = 0;
+
+	state->tuples_count = 0;
+	state->tuples_read = 0;
+	state->tuples_skipped = 0;
+	state->tuples_deleted = 0;
+
 	state->tuples = 0;
 
 	/*
@@ -285,8 +289,7 @@ tuplestore_begin_common(int eflags, bool interXact, int maxKBytes)
 	state->activeptr = 0;
 	state->readptrcount = 1;
 	state->readptrsize = 8;		/* arbitrary */
-	state->readptrs = (TSReadPointer *)
-		palloc(state->readptrsize * sizeof(TSReadPointer));
+	state->readptrs = (TSReadPointer *) palloc(state->readptrsize * sizeof(TSReadPointer));
 
 	state->readptrs[0].eflags = eflags;
 	state->readptrs[0].eof_reached = false;
@@ -442,6 +445,9 @@ tuplestore_clear(Tuplestorestate *state)
 		readptr->eof_reached = false;
 		readptr->current = 0;
 	}
+
+	state->tuples_count = 0;
+	state->tuples_read = 0;
 }
 
 /*
@@ -801,7 +807,8 @@ tuplestore_puttuple_common(Tuplestorestate *state, void *tuple)
 
 			/* Stash the tuple in the in-memory array */
 			state->memtuples[state->memtupcount++] = tuple;
-
+			state->tuples_count++;
+			
 			/*
 			 * Done if we still fit in available memory and have array slots.
 			 */
@@ -851,6 +858,7 @@ tuplestore_puttuple_common(Tuplestorestate *state, void *tuple)
 			}
 
 			WRITETUP(state, tuple);
+			state->tuples_count++;
 			break;
 		case TSS_READFILE:
 
@@ -884,6 +892,7 @@ tuplestore_puttuple_common(Tuplestorestate *state, void *tuple)
 			}
 
 			WRITETUP(state, tuple);
+			state->tuples_count++;
 			break;
 		default:
 			elog(ERROR, "invalid tuplestore state");
@@ -920,6 +929,7 @@ tuplestore_gettuple(Tuplestorestate *state, bool forward,
 				if (readptr->current < state->memtupcount)
 				{
 					/* We have another tuple, so return it */
+					state->tuples_read++;
 					return state->memtuples[readptr->current++];
 				}
 				readptr->eof_reached = true;
@@ -950,6 +960,7 @@ tuplestore_gettuple(Tuplestorestate *state, bool forward,
 					Assert(!state->truncated);
 					return NULL;
 				}
+				state->tuples_read++;
 				return state->memtuples[readptr->current - 1];
 			}
 			break;
@@ -981,6 +992,7 @@ tuplestore_gettuple(Tuplestorestate *state, bool forward,
 				if ((tuplen = getlen(state, true)) != 0)
 				{
 					tup = READTUP(state, tuplen);
+					state->tuples_read++;
 					return tup;
 				}
 				else
@@ -1053,6 +1065,7 @@ tuplestore_gettuple(Tuplestorestate *state, bool forward,
 						(errcode_for_file_access(),
 				 errmsg("could not seek in tuplestore temporary file: %m")));
 			tup = READTUP(state, tuplen);
+			state->tuples_read++;
 			return tup;
 
 		default:
@@ -1151,6 +1164,7 @@ tuplestore_skiptuples(Tuplestorestate *state, int64 ntuples, bool forward)
 				if (state->memtupcount - readptr->current >= ntuples)
 				{
 					readptr->current += ntuples;
+					state->tuples_skipped++;	
 					return true;
 				}
 				readptr->current = state->memtupcount;
@@ -1168,6 +1182,7 @@ tuplestore_skiptuples(Tuplestorestate *state, int64 ntuples, bool forward)
 				if (readptr->current - state->memtupdeleted > ntuples)
 				{
 					readptr->current -= ntuples;
+					state->tuples_skipped++;	
 					return true;
 				}
 				Assert(!state->truncated);
@@ -1191,6 +1206,7 @@ tuplestore_skiptuples(Tuplestorestate *state, int64 ntuples, bool forward)
 					pfree(tuple);
 				CHECK_FOR_INTERRUPTS();
 			}
+			state->tuples_skipped++;	
 			return true;
 	}
 }
@@ -1221,6 +1237,7 @@ dumptuples(Tuplestorestate *state)
 		if (i >= state->memtupcount)
 			break;
 		WRITETUP(state, state->memtuples[i]);
+		state->tuples_count++;
 	}
 	state->memtupdeleted = 0;
 	state->memtupcount = 0;
@@ -1457,6 +1474,30 @@ tuplestore_in_memory(Tuplestorestate *state)
 	return (state->status == TSS_INMEM);
 }
 
+unsigned int
+tuplestore_status(Tuplestorestate *state)
+{
+	return state->status;
+}
+
+void
+tuplestore_get_state(Tuplestorestate *state, struct tss_report* tss)
+{
+	tss->memtupcount = state->memtupcount;
+	tss->memtupskipped = state->memtupskipped;
+	tss->memtupread = state->memtupread;
+	tss->memtupdeleted = state->memtupdeleted;
+
+	tss->tuples_count = state->tuples_count;
+	tss->tuples_read = state->tuples_read;
+	tss->tuples_skipped = state->tuples_skipped;
+	tss->tuples_deleted = state->tuples_deleted;
+	tss->readptrcount = state->readptrcount;
+
+	tss->disk_size = BufFileGetDiskSize(state->myfile);
+
+	tss->status = state->status;
+}
 
 /*
  * Tape interface routines

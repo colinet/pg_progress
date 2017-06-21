@@ -64,6 +64,12 @@ struct BufFile
 	off_t	   *offsets;		/* palloc'd array with numFiles entries */
 
 	/*
+	 * palloc's array of blk I/O stat
+	 */
+	int *bytes_read;
+	int *bytes_write;
+
+	/*
 	 * offsets[i] is the current seek position of files[i].  We use this to
 	 * avoid making redundant FileSeek calls.
 	 */
@@ -109,8 +115,13 @@ makeBufFile(File firstfile)
 	file->numFiles = 1;
 	file->files = (File *) palloc(sizeof(File));
 	file->files[0] = firstfile;
+
 	file->offsets = (off_t *) palloc(sizeof(off_t));
 	file->offsets[0] = 0L;
+
+	file->bytes_read = (int*) palloc0(sizeof(int));
+	file->bytes_write = (int*) palloc0(sizeof(int));
+
 	file->isTemp = false;
 	file->isInterXact = false;
 	file->dirty = false;
@@ -146,6 +157,10 @@ extendBufFile(BufFile *file)
 									(file->numFiles + 1) * sizeof(File));
 	file->offsets = (off_t *) repalloc(file->offsets,
 									   (file->numFiles + 1) * sizeof(off_t));
+
+	file->bytes_read = (int*) repalloc(file->bytes_read, (file->numFiles + 1) * sizeof(int));
+	file->bytes_write = (int*) repalloc(file->bytes_write, (file->numFiles + 1) * sizeof(int));
+
 	file->files[file->numFiles] = pfile;
 	file->offsets[file->numFiles] = 0L;
 	file->numFiles++;
@@ -212,6 +227,10 @@ BufFileClose(BufFile *file)
 	/* release the buffer space */
 	pfree(file->files);
 	pfree(file->offsets);
+
+	pfree(file->bytes_read);
+	pfree(file->bytes_write);
+
 	pfree(file);
 }
 
@@ -261,6 +280,9 @@ BufFileLoadBuffer(BufFile *file)
 							WAIT_EVENT_BUFFILE_READ);
 	if (file->nbytes < 0)
 		file->nbytes = 0;
+
+	file->bytes_read[file->curFile] += file->nbytes;
+
 	file->offsets[file->curFile] += file->nbytes;
 	/* we choose not to advance curOffset here */
 
@@ -327,6 +349,9 @@ BufFileDumpBuffer(BufFile *file)
 								 WAIT_EVENT_BUFFILE_WRITE);
 		if (bytestowrite <= 0)
 			return;				/* failed to write */
+
+		file->bytes_write[file->curFile] += bytestowrite;
+
 		file->offsets[file->curFile] += bytestowrite;
 		file->curOffset += bytestowrite;
 		wpos += bytestowrite;
@@ -607,7 +632,55 @@ BufFileTellBlock(BufFile *file)
 
 	blknum = (file->curOffset + file->pos) / BLCKSZ;
 	blknum += file->curFile * BUFFILE_SEG_SIZE;
+
 	return blknum;
 }
 
 #endif
+
+struct buffile_state* BufFileState(BufFile *file)
+{
+	struct buffile_state* bfs;
+	int i;
+
+	if (file->numFiles == 0)
+		return NULL;
+
+	bfs = (struct buffile_state*) palloc0(sizeof(struct buffile_state));
+	bfs->numFiles = file->numFiles;
+	bfs->disk_size = BufFileGetDiskSize(file);
+
+	bfs->bytes_read = (int*) palloc0(file->numFiles * sizeof(int));
+	bfs->bytes_write = (int*) palloc0(file->numFiles * sizeof(int));
+
+	for (i = 0; i < file->numFiles; i++) {
+		bfs->bytes_read[i] = file->bytes_read[i];
+		bfs->bytes_write[i] = file->bytes_write[i];
+	}
+
+	return bfs;
+}
+
+/*
+ * Report disk use in Bytes
+ */
+int
+BufFileGetDiskSize(BufFile *file)
+{
+	int i;
+	int size;
+
+	if (file == NULL)
+		return 0;
+
+	if (file->numFiles == 0)
+		return 0;
+
+	size = 0;	
+
+	for (i = 0; i < file->numFiles; i++) {
+		size += FileGetSize(file->files[i]);
+	}
+
+	return size;
+}

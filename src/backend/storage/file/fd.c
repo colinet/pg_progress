@@ -3213,3 +3213,18 @@ fsync_parent_path(const char *fname, int elevel)
 
 	return 0;
 }
+
+int
+FileGetSize(File file)
+{
+	Vfd* vfdP;
+
+	if (!FileIsValid(file))
+		return 0;
+
+	vfdP = &VfdCache[file];
+	if (vfdP == NULL)
+		return 0;
+
+	return vfdP->fileSize;
+}

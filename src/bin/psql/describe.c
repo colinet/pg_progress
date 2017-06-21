@@ -2536,16 +2536,12 @@ describeOneTableDetails(const char *schemaname,
 		if (pset.sversion >= 100000)
 		{
 			printfPQExpBuffer(&buf,
-							  "SELECT pubname\n"
-							  "FROM pg_catalog.pg_publication p\n"
-							  "JOIN pg_catalog.pg_publication_rel pr ON p.oid = pr.prpubid\n"
-							  "WHERE pr.prrelid = '%s'\n"
-							  "UNION ALL\n"
-							  "SELECT pubname\n"
-							  "FROM pg_catalog.pg_publication p\n"
-							  "WHERE p.puballtables AND pg_relation_is_publishable('%s')\n"
+							  "SELECT pub.pubname\n"
+							  " FROM pg_catalog.pg_publication pub,\n"
+				  "      pg_catalog.pg_get_publication_tables(pub.pubname)\n"
+							  "WHERE relid = '%s'\n"
 							  "ORDER BY 1;",
-							  oid, oid);
+							  oid);
 
 			result = PSQLexec(buf.data);
 			if (!result)
@@ -3292,6 +3288,7 @@ listDbRoleSettings(const char *pattern, const char *pattern2)
  * s - sequences
  * E - foreign table (Note: different from 'f', the relkind value)
  * (any order of the above is fine)
+ * If tabtypes is empty, we default to \dtvsE.
  */
 bool
 listTables(const char *tabtypes, const char *pattern, bool verbose, bool showSystem)
@@ -3308,7 +3305,6 @@ listTables(const char *tabtypes, const char *pattern, bool verbose, bool showSys
 	printQueryOpt myopt = pset.popt;
 	static const bool translate_columns[] = {false, false, true, false, false, false, false};
 
-	/* If tabtypes is empty, we default to \dtvmsE (but see also command.c) */
 	if (!(showTables || showIndexes || showViews || showMatViews || showSeq || showForeign))
 		showTables = showViews = showMatViews = showSeq = showForeign = true;
 

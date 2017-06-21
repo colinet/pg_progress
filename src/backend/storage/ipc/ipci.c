@@ -46,6 +46,8 @@
 #include "storage/spin.h"
 #include "utils/backend_random.h"
 #include "utils/snapmgr.h"
+#include "nodes/plannodes.h"
+#include "utils/pg_progress.h"
 
 
 shmem_startup_hook_type shmem_startup_hook = NULL;
@@ -150,6 +152,7 @@ CreateSharedMemoryAndSemaphores(bool makePrivate, int port)
 		size = add_size(size, SyncScanShmemSize());
 		size = add_size(size, AsyncShmemSize());
 		size = add_size(size, BackendRandomShmemSize());
+		size = add_size(size, ProgressShmemSize());
 #ifdef EXEC_BACKEND
 		size = add_size(size, ShmemBackendArraySize());
 #endif
@@ -270,6 +273,7 @@ CreateSharedMemoryAndSemaphores(bool makePrivate, int port)
 	SyncScanShmemInit();
 	AsyncShmemInit();
 	BackendRandomShmemInit();
+	ProgressShmemInit();
 
 #ifdef EXEC_BACKEND
 

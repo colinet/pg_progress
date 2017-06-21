@@ -123,6 +123,8 @@ extern int	durable_unlink(const char *fname, int loglevel);
 extern int	durable_link_or_rename(const char *oldfile, const char *newfile, int loglevel);
 extern void SyncDataDirectory(void);
 
+extern int FileGetSize(File file);
+
 /* Filename components for OpenTemporaryFile */
 #define PG_TEMP_FILES_DIR "pgsql_tmp"
 #define PG_TEMP_FILE_PREFIX "pgsql_tmp"
