@@ -1918,7 +1918,8 @@ ReportHasChildren(Plan* plan, PlanState* planstate)
 {
 	bool haschildren;
 
-	haschildren = planstate->initPlan || outerPlanState(planstate)
+	haschildren = planstate->initPlan
+		|| outerPlanState(planstate)
 		|| innerPlanState(planstate)
 		|| IsA(plan, ModifyTable)
 		|| IsA(plan, Append)
@@ -1926,7 +1927,8 @@ ReportHasChildren(Plan* plan, PlanState* planstate)
 		|| IsA(plan, BitmapAnd)
 		|| IsA(plan, BitmapOr)
 		|| IsA(plan, SubqueryScan)
-		|| (IsA(planstate, CustomScanState) && ((CustomScanState*) planstate)->custom_ps != NIL)
+		|| (IsA(planstate, CustomScanState)
+			&& ((CustomScanState*) planstate)->custom_ps != NIL)
 		|| planstate->subPlan;
 
 	return haschildren;
@@ -2133,7 +2135,8 @@ void __ProgressScanBlks(HeapScanDesc hsd, ProgressState* ps)
 
 			ProgressPropLong(ps, PROP, "fetched", nr_blks, BLK_UNIT);
 			ProgressPropLong(ps, PROP, "total", phsd->phs_nblocks, BLK_UNIT);
-			ProgressPropLong(ps, PROP, "completion", 100 * nr_blks/(phsd->phs_nblocks), PERCENT_UNIT);
+			ProgressPropLong(ps, PROP, "completion",
+				100 * nr_blks/(phsd->phs_nblocks), PERCENT_UNIT);
 		} else {
 			if (phsd->phs_nblocks != 0)
 				ProgressPropLong(ps, PROP, "total", phsd->phs_nblocks, BLK_UNIT);
@@ -2151,7 +2154,8 @@ void __ProgressScanBlks(HeapScanDesc hsd, ProgressState* ps)
 	
 			ProgressPropLong(ps, PROP, "fetched", nr_blks, BLK_UNIT);
 			ProgressPropLong(ps, PROP, "total", hsd->rs_nblocks, BLK_UNIT);
-			ProgressPropLong(ps, PROP, "completion", 100 * nr_blks/(hsd->rs_nblocks), PERCENT_UNIT);
+			ProgressPropLong(ps, PROP, "completion",
+				100 * nr_blks/(hsd->rs_nblocks), PERCENT_UNIT);
 		} else {
 			if (hsd->rs_nblocks != 0)
 				ProgressPropLong(ps, PROP, "total", hsd->rs_nblocks, BLK_UNIT);
