@@ -164,12 +164,17 @@ static bool found_existing_xlogdir = false;
 static char infoversion[100];
 static bool caught_signal = false;
 static bool output_failed = false;
-static int	output_errno = 0;
+static int output_errno = 0;
 static char *pgdata_native;
 
+static int seg_blck_size = 8192;	/* 8KB */
+static int seg_file_size = 131072;	/* 1GB */
+static int wal_blck_size = 8192;	/* 8KB */
+static int wal_file_size = 2048;	/* 16MB */
+
 /* defaults */
-static int	n_connections = 10;
-static int	n_buffers = 50;
+static int n_connections = 10;
+static int n_buffers = 50;
 static char *dynamic_shared_memory_type = NULL;
 
 /*
@@ -2276,6 +2281,14 @@ usage(const char *progname)
 	printf(_("  -U, --username=NAME       database superuser name\n"));
 	printf(_("  -W, --pwprompt            prompt for a password for the new superuser\n"));
 	printf(_("  -X, --waldir=WALDIR       location for the write-ahead log directory\n"));
+	printf(_("      --segblcksize=SEGBLCKSIZE\n"
+                         "                    block size of segment files\n"));
+	printf(_("      --segfilesize=SEGFILESIZE\n"
+                         "                    size of segment files in segment block size\n"));
+	printf(_("      --walblcksize=WALBLCKSIZE\n"
+                         "                    block size of wal files\n"));
+	printf(_("      --walfilesize=WALBLCKSIZE\n"
+                         "                    size of wal files in wal block size\n"));
 	printf(_("\nLess commonly used options:\n"));
 	printf(_("  -d, --debug               generate lots of debugging output\n"));
 	printf(_("  -k, --data-checksums      use data page checksums\n"));
@@ -2345,6 +2358,32 @@ check_need_password(const char *authmethodlocal, const char *authmethodhost)
 	}
 }
 
+void
+check_block_file_sizes(void)
+{
+	if (seg_block_size > 32768) {
+		fprintf(stderr, _("seg_block_size must be below 32768 bytes size"));
+		return 1;
+	}
+	
+	if (seg_file_size ) {
+		fprintf(stderr, _("seg_block_size must be below 32768 bytes size"));
+		return 1;
+	}
+
+
+	if (wal_block_size > ) {
+		fprintf(stderr, _("seg_block_size must be below 32768 bytes size"));
+		return 1;
+	}
+
+	if (wal_block_size > ) {
+		fprintf(stderr, _("seg_block_size must be below 32768 bytes size"));
+		return 1;
+	}	
+
+	return 0;
+}
 
 void
 setup_pgdata(void)
@@ -2965,6 +3004,10 @@ main(int argc, char *argv[])
 		{"no-sync", no_argument, NULL, 'N'},
 		{"sync-only", no_argument, NULL, 'S'},
 		{"waldir", required_argument, NULL, 'X'},
+		{"segblcksize", required_argument, NULL, 12},
+		{"segfilesize", required_argument, NULL, 13},
+		{"walblcksize", required_argument, NULL, 14},
+		{"walfilesize", required_argument, NULL, 15},
 		{"data-checksums", no_argument, NULL, 'k'},
 		{NULL, 0, NULL, 0}
 	};
@@ -3098,6 +3141,18 @@ main(int argc, char *argv[])
 			case 'X':
 				xlog_dir = pg_strdup(optarg);
 				break;
+			case 12:
+				seg_blck_size = pg_strdup(optarg);
+				break;
+			case 13:
+				seg_file_size = pg_strdup(optarg);
+				break;
+			case 14:
+				wal_blck_size = pg_strdup(optarg);
+				break;
+			case 15:
+				wal_file_size = pg_strdup(optarg);
+				break;
 			default:
 				/* getopt_long already emitted a complaint */
 				fprintf(stderr, _("Try \"%s --help\" for more information.\n"),
@@ -3123,6 +3178,13 @@ main(int argc, char *argv[])
 				progname, argv[optind]);
 		fprintf(stderr, _("Try \"%s --help\" for more information.\n"),
 				progname);
+		exit(1);
+	}
+
+	/*
+	 * Check the block size and file size of segment and wal files
+	 */
+	if (check_blck_file_sizes() != 0) {
 		exit(1);
 	}
 
