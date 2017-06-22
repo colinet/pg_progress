@@ -2361,7 +2361,7 @@ check_need_password(const char *authmethodlocal, const char *authmethodhost)
 void
 check_block_file_sizes(void)
 {
-	if (seg_block_size > 32768) {
+	if (seg_blck_size > 32768) {
 		fprintf(stderr, _("seg_block_size must be below 32768 bytes size"));
 		return 1;
 	}
@@ -2372,12 +2372,12 @@ check_block_file_sizes(void)
 	}
 
 
-	if (wal_block_size > ) {
+	if (wal_blck_size > ) {
 		fprintf(stderr, _("seg_block_size must be below 32768 bytes size"));
 		return 1;
 	}
 
-	if (wal_block_size > ) {
+	if (wal_file_size > ) {
 		fprintf(stderr, _("seg_block_size must be below 32768 bytes size"));
 		return 1;
 	}	
