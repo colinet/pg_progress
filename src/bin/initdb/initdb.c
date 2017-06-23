@@ -976,8 +976,8 @@ test_config_settings(void)
 
 	for (i = 0; i < bufslen; i++)
 	{
-		/* Use same amount of memory, independent of seg_blck_size */
-		test_buffs = (trial_bufs[i] * 8192) / seg_blck_size;
+		/* Use same amount of memory, independent of BLCKSZ */
+		test_buffs = (trial_bufs[i] * 8192) / BLCKSZ;
 		if (test_buffs <= ok_buffers)
 		{
 			test_buffs = ok_buffers;
@@ -999,10 +999,10 @@ test_config_settings(void)
 	}
 	n_buffers = test_buffs;
 
-	if ((n_buffers * (seg_blck_size / 1024)) % 1024 == 0)
-		printf("%dMB\n", (n_buffers * (seg_blck_size / 1024)) / 1024);
+	if ((n_buffers * (BLCKSZ / 1024)) % 1024 == 0)
+		printf("%dMB\n", (n_buffers * (BLCKSZ / 1024)) / 1024);
 	else
-		printf("%dkB\n", n_buffers * (seg_blck_size / 1024));
+		printf("%dkB\n", n_buffers * (BLCKSZ / 1024));
 
 	printf(_("selecting dynamic shared memory implementation ... "));
 	fflush(stdout);
@@ -1032,12 +1032,12 @@ setup_config(void)
 	snprintf(repltok, sizeof(repltok), "max_connections = %d", n_connections);
 	conflines = replace_token(conflines, "#max_connections = 100", repltok);
 
-	if ((n_buffers * (seg_blck_size / 1024)) % 1024 == 0)
+	if ((n_buffers * (BLCKSZ / 1024)) % 1024 == 0)
 		snprintf(repltok, sizeof(repltok), "shared_buffers = %dMB",
-				 (n_buffers * (seg_blck_size / 1024)) / 1024);
+				 (n_buffers * (BLCKSZ / 1024)) / 1024);
 	else
 		snprintf(repltok, sizeof(repltok), "shared_buffers = %dkB",
-				 n_buffers * (seg_blck_size / 1024));
+				 n_buffers * (BLCKSZ / 1024));
 	conflines = replace_token(conflines, "#shared_buffers = 32MB", repltok);
 
 #ifdef HAVE_UNIX_SOCKETS
@@ -1110,21 +1110,21 @@ setup_config(void)
 
 #if DEFAULT_BACKEND_FLUSH_AFTER > 0
 	snprintf(repltok, sizeof(repltok), "#backend_flush_after = %dkB",
-			 DEFAULT_BACKEND_FLUSH_AFTER * (seg_blck_size / 1024));
+			 DEFAULT_BACKEND_FLUSH_AFTER * (BLCKSZ / 1024));
 	conflines = replace_token(conflines, "#backend_flush_after = 0",
 							  repltok);
 #endif
 
 #if DEFAULT_BGWRITER_FLUSH_AFTER > 0
 	snprintf(repltok, sizeof(repltok), "#bgwriter_flush_after = %dkB",
-			 DEFAULT_BGWRITER_FLUSH_AFTER * (seg_blck_size / 1024));
+			 DEFAULT_BGWRITER_FLUSH_AFTER * (BLCKSZ / 1024));
 	conflines = replace_token(conflines, "#bgwriter_flush_after = 0",
 							  repltok);
 #endif
 
 #if DEFAULT_CHECKPOINT_FLUSH_AFTER > 0
 	snprintf(repltok, sizeof(repltok), "#checkpoint_flush_after = %dkB",
-			 DEFAULT_CHECKPOINT_FLUSH_AFTER * (seg_blck_size / 1024));
+			 DEFAULT_CHECKPOINT_FLUSH_AFTER * (BLCKSZ / 1024));
 	conflines = replace_token(conflines, "#checkpoint_flush_after = 0",
 							  repltok);
 #endif
@@ -3239,7 +3239,13 @@ main(int argc, char *argv[])
 		}
 	}
 
-
+	fprintf(stdout, "\n");
+	fprintf(stdout, "seg_blck_size = %d\n", seg_blck_size);
+	fprintf(stdout, "seg_file_size = %d\n", seg_file_size);
+	fprintf(stdout, "wal_blck_size = %d\n", wal_blck_size);
+	fprintf(stdout, "wal_file_size = %d\n", wal_file_size);
+	fflush(stdout);
+	
 	/*
 	 * Non-option argument specifies data directory as long as it wasn't
 	 * already specified with -D / --pgdata
