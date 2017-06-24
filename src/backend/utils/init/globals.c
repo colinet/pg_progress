@@ -138,3 +138,12 @@ int			VacuumPageDirty = 0;
 
 int			VacuumCostBalance = 0;	/* working state for vacuum */
 bool		VacuumCostActive = false;
+
+/*
+ * These are kept in control file. Values in control file are defined 
+ * at cluster initialization.
+ */
+int seg_blck_size;	/* in bytes, default 8KB */
+int seg_file_size;	/* in blocks, default 1GB */
+int wal_blck_size;	/* in bytes, default 8KB */
+int wal_file_size;	/* in blocks, default 16MB */

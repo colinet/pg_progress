@@ -86,6 +86,13 @@ typedef XLogLongPageHeaderData *XLogLongPageHeader;
 	(((hdr)->xlp_info & XLP_LONG_HEADER) ? SizeOfXLogLongPHD : SizeOfXLogShortPHD)
 
 /*
+ * XLOG block size in bytes
+ * XLOG file size in blocks
+ */
+extern int wal_blck_size;
+extern int wal_file_size;
+
+/*
  * The XLOG is split into WAL segments (physical files) of the size indicated
  * by XLOG_SEG_SIZE.
  */

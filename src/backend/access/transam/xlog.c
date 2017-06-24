@@ -64,6 +64,7 @@
 #include "storage/procarray.h"
 #include "storage/reinit.h"
 #include "storage/smgr.h"
+#include "storage/md.h"
 #include "storage/spin.h"
 #include "utils/backend_random.h"
 #include "utils/builtins.h"
