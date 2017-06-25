@@ -143,7 +143,10 @@ bool		VacuumCostActive = false;
  * These are kept in control file. Values in control file are defined 
  * at cluster initialization.
  */
-int seg_blck_size;	/* in bytes, default 8KB */
-int seg_file_size;	/* in blocks, default 1GB */
-int wal_blck_size;	/* in bytes, default 8KB */
-int wal_file_size;	/* in blocks, default 16MB */
+unsigned int rel_blck_size;	/* in bytes, default 8KB */
+unsigned int rel_file_blck;	/* in blocks, default 1GB */
+unsigned long rel_file_size;	/* in bytes */
+
+unsigned int wal_blck_size;	/* in bytes, default 8KB */
+unsigned int wal_file_blck;	/* in blocks, default 16MB */
+unsigned long wal_file_size;	/* in bytes */

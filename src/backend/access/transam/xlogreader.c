@@ -779,6 +779,8 @@ ValidXLogPageHeader(XLogReaderState *state, XLogRecPtr recptr,
 		{
 			report_invalid_record(state,
 								  "WAL file is from different database system: incorrect XLOG_SEG_SIZE in page header");
+			report_invalid_record(state,
+								  "longhdr->xlp_seg_size = %d", longhdr->xlp_seg_size);
 			return false;
 		}
 		else if (longhdr->xlp_xlog_blcksz != XLOG_BLCKSZ)

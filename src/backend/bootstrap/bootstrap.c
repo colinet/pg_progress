@@ -418,7 +418,9 @@ AuxiliaryProcessMain(int argc, char *argv[])
 			SetProcessingMode(BootstrapProcessing);
 			bootstrap_signals();
 			BootStrapXLOG();
+			fprintf(stdout, "BootStrapXLOG completed\n");
 			BootstrapModeMain();
+			fprintf(stdout, "BootStrapModeMain completed\n");
 			proc_exit(1);		/* should never return */
 
 		case StartupProcess:

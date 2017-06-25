@@ -4379,6 +4379,12 @@ WriteControlFile(void)
 	int			fd;
 	char		buffer[PG_CONTROL_SIZE];	/* need not be aligned */
 
+	//unsigned int rel_blck_size;	
+	//unsigned int rel_file_blck;	
+
+	//unsigned int wal_blck_size;	
+	//unsigned int wal_file_blck;	
+
 	/*
 	 * Initialize version and compatibility-check fields
 	 */
@@ -4388,10 +4394,28 @@ WriteControlFile(void)
 	ControlFile->maxAlign = MAXIMUM_ALIGNOF;
 	ControlFile->floatFormat = FLOATFORMAT_VALUE;
 
-	ControlFile->blcksz = BLCKSZ;
-	ControlFile->relseg_size = RELSEG_SIZE;
-	ControlFile->xlog_blcksz = XLOG_BLCKSZ;
-	ControlFile->xlog_seg_size = XLOG_SEG_SIZE;
+	fprintf(stdout, "In WriteControlFile\n");
+
+	rel_blck_size = atoi(GetConfigOption("block_size", false, false));
+	rel_file_blck = atoi(GetConfigOption("segment_size", false, false));
+	rel_file_size = rel_file_blck * rel_blck_size;
+
+	wal_blck_size = atoi(GetConfigOption("wal_block_size", false, false));
+	wal_file_blck = atoi(GetConfigOption("wal_segment_size", false, false));
+	wal_file_size = wal_file_blck * wal_blck_size;
+
+	fprintf(stdout, "rel_blck_size = %u\n", rel_blck_size);
+	fprintf(stdout, "rel_file_blck = %u\n", rel_file_blck);
+	fprintf(stdout, "rel_file_size = %lu\n", rel_file_size);
+
+	fprintf(stdout, "wal_blck_size = %u\n", wal_blck_size);
+	fprintf(stdout, "wal_file_blck = %u\n", wal_file_blck);
+	fprintf(stdout, "wal_file_size = %lu\n", wal_file_size);
+	
+	ControlFile->blcksz =  rel_blck_size;
+	ControlFile->relseg_size = rel_file_blck;
+	ControlFile->xlog_blcksz = wal_blck_size;
+	ControlFile->xlog_seg_size = wal_file_size;
 
 	ControlFile->nameDataLen = NAMEDATALEN;
 	ControlFile->indexMaxKeys = INDEX_MAX_KEYS;
@@ -4462,6 +4486,8 @@ ReadControlFile(void)
 {
 	pg_crc32c	crc;
 	int			fd;
+
+	fprintf(stdout, "In ReadControlFile\n");
 
 	/*
 	 * Read data...
@@ -4543,6 +4569,7 @@ ReadControlFile(void)
 				(errmsg("database files are incompatible with server"),
 				 errdetail("The database cluster appears to use a different floating-point number format than the server executable."),
 				 errhint("It looks like you need to initdb.")));
+/*
 	if (ControlFile->blcksz != BLCKSZ)
 		ereport(FATAL,
 				(errmsg("database files are incompatible with server"),
@@ -4571,6 +4598,23 @@ ReadControlFile(void)
 						   " but the server was compiled with XLOG_SEG_SIZE %d.",
 						   ControlFile->xlog_seg_size, XLOG_SEG_SIZE),
 				 errhint("It looks like you need to recompile or initdb.")));
+*/
+	rel_blck_size = ControlFile->blcksz;
+	rel_file_blck = ControlFile->relseg_size;
+	rel_file_size = rel_file_blck * rel_blck_size;
+
+	wal_blck_size = ControlFile->xlog_blcksz;
+	wal_file_size = ControlFile->xlog_seg_size;
+	wal_file_blck = wal_file_size / wal_blck_size;
+
+	fprintf(stdout, "rel_blck_size = %u\n", rel_blck_size);
+	fprintf(stdout, "rel_file_blck = %u\n", rel_file_blck);
+	fprintf(stdout, "rel_file_size = %lu\n", rel_file_size);
+
+	fprintf(stdout, "wal_blck_size = %u\n", wal_blck_size);
+	fprintf(stdout, "wal_file_blck = %u\n", wal_file_blck);
+	fprintf(stdout, "wal_file_size = %lu\n", wal_file_size);
+	
 	if (ControlFile->nameDataLen != NAMEDATALEN)
 		ereport(FATAL,
 				(errmsg("database files are incompatible with server"),
@@ -4957,6 +5001,18 @@ BootStrapXLOG(void)
 	struct timeval tv;
 	pg_crc32c	crc;
 
+	unsigned int wal_blck_size;
+	unsigned int wal_file_blck;
+
+	fprintf(stdout, "In BootStrapXLOG\n");
+
+	wal_blck_size = atoi(GetConfigOption("wal_block_size", false, false));
+	wal_file_blck = atoi(GetConfigOption("wal_segment_size", false, false));
+	wal_file_size = wal_file_blck * wal_blck_size;
+
+	fprintf(stdout, "wal_blck_size = %d\n", wal_blck_size);
+	fprintf(stdout, "wal_file_blck = %d\n", wal_file_blck);
+	
 	/*
 	 * Select a hopefully-unique system identifier code for this installation.
 	 * We use the result of gettimeofday(), including the fractional seconds
@@ -4989,9 +5045,9 @@ BootStrapXLOG(void)
 	ThisTimeLineID = 1;
 
 	/* page buffer must be aligned suitably for O_DIRECT */
-	buffer = (char *) palloc(XLOG_BLCKSZ + XLOG_BLCKSZ);
-	page = (XLogPageHeader) TYPEALIGN(XLOG_BLCKSZ, buffer);
-	memset(page, 0, XLOG_BLCKSZ);
+	buffer = (char *) palloc(wal_blck_size + wal_blck_size);
+	page = (XLogPageHeader) TYPEALIGN(wal_blck_size, buffer);
+	memset(page, 0, wal_blck_size);
 
 	/*
 	 * Set up information for the initial checkpoint record
@@ -5034,8 +5090,8 @@ BootStrapXLOG(void)
 	page->xlp_pageaddr = XLogSegSize;
 	longpage = (XLogLongPageHeader) page;
 	longpage->xlp_sysid = sysidentifier;
-	longpage->xlp_seg_size = XLogSegSize;
-	longpage->xlp_xlog_blcksz = XLOG_BLCKSZ;
+	longpage->xlp_seg_size = wal_file_size;
+	longpage->xlp_xlog_blcksz = wal_blck_size;
 
 	/* Insert the initial checkpoint record */
 	recptr = ((char *) page + SizeOfXLogLongPHD);
@@ -5046,6 +5102,7 @@ BootStrapXLOG(void)
 	record->xl_info = XLOG_CHECKPOINT_SHUTDOWN;
 	record->xl_rmid = RM_XLOG_ID;
 	recptr += SizeOfXLogRecord;
+
 	/* fill the XLogRecordDataHeaderShort struct */
 	*(recptr++) = (char) XLR_BLOCK_ID_DATA_SHORT;
 	*(recptr++) = sizeof(checkPoint);
@@ -5066,7 +5123,7 @@ BootStrapXLOG(void)
 	/* Write the first page with the initial record */
 	errno = 0;
 	pgstat_report_wait_start(WAIT_EVENT_WAL_BOOTSTRAP_WRITE);
-	if (write(openLogFile, page, XLOG_BLCKSZ) != XLOG_BLCKSZ)
+	if (write(openLogFile, page, wal_blck_size) != wal_blck_size)
 	{
 		/* if write didn't set errno, assume problem is no disk space */
 		if (errno == 0)
@@ -5092,8 +5149,8 @@ BootStrapXLOG(void)
 	openLogFile = -1;
 
 	/* Now create pg_control */
-
 	memset(ControlFile, 0, sizeof(ControlFileData));
+
 	/* Initialize pg_control status fields */
 	ControlFile->system_identifier = sysidentifier;
 	memcpy(ControlFile->mock_authentication_nonce, mock_auth_nonce, MOCK_AUTH_NONCE_LEN);
@@ -5114,7 +5171,6 @@ BootStrapXLOG(void)
 	ControlFile->data_checksum_version = bootstrap_data_checksum_version;
 
 	/* some additional ControlFile fields are set in WriteControlFile() */
-
 	WriteControlFile();
 
 	/* Bootstrap the commit log, too */

@@ -26,6 +26,7 @@
 #include "pgtime.h"
 #include "storage/block.h"
 #include "storage/relfilenode.h"
+#include "storage/md.h"
 
 
 /*
@@ -84,13 +85,6 @@ typedef XLogLongPageHeaderData *XLogLongPageHeader;
 
 #define XLogPageHeaderSize(hdr)		\
 	(((hdr)->xlp_info & XLP_LONG_HEADER) ? SizeOfXLogLongPHD : SizeOfXLogShortPHD)
-
-/*
- * XLOG block size in bytes
- * XLOG file size in blocks
- */
-extern int wal_blck_size;
-extern int wal_file_size;
 
 /*
  * The XLOG is split into WAL segments (physical files) of the size indicated

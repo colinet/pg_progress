@@ -89,6 +89,8 @@
 #include "utils/tzparser.h"
 #include "utils/varlena.h"
 #include "utils/xml.h"
+#include "pg_control_def.h"
+
 
 #ifndef PG_KRB_SRVTAB
 #define PG_KRB_SRVTAB ""
@@ -2586,35 +2588,37 @@ static struct config_int ConfigureNamesInt[] =
 	},
 
 	{
-		{"block_size", PGC_INTERNAL, PRESET_OPTIONS,
+		{"block_size", PGC_POSTMASTER, PRESET_OPTIONS,
 			gettext_noop("Shows the size of a disk block."),
 			NULL,
 			GUC_NOT_IN_SAMPLE | GUC_DISALLOW_IN_FILE
 		},
 		&block_size,
-		BLCKSZ, BLCKSZ, BLCKSZ,
+		SEG_BLCK_SIZE_DEF, SEG_BLCK_SIZE_MIN, SEG_BLCK_SIZE_MAX,
 		NULL, NULL, NULL
 	},
 
 	{
-		{"segment_size", PGC_INTERNAL, PRESET_OPTIONS,
+		{"segment_size", PGC_POSTMASTER, PRESET_OPTIONS,
 			gettext_noop("Shows the number of pages per disk file."),
 			NULL,
 			GUC_UNIT_BLOCKS | GUC_NOT_IN_SAMPLE | GUC_DISALLOW_IN_FILE
 		},
 		&segment_size,
-		RELSEG_SIZE, RELSEG_SIZE, RELSEG_SIZE,
+		SEG_FILE_SIZE_DEF_BLCK,
+		SEG_FILE_SIZE_MIN_BLCK,
+		SEG_FILE_SIZE_MAX_BLCK,
 		NULL, NULL, NULL
 	},
 
 	{
-		{"wal_block_size", PGC_INTERNAL, PRESET_OPTIONS,
+		{"wal_block_size", PGC_POSTMASTER, PRESET_OPTIONS,
 			gettext_noop("Shows the block size in the write ahead log."),
 			NULL,
 			GUC_NOT_IN_SAMPLE | GUC_DISALLOW_IN_FILE
 		},
 		&wal_block_size,
-		XLOG_BLCKSZ, XLOG_BLCKSZ, XLOG_BLCKSZ,
+		WAL_BLCK_SIZE_DEF, WAL_BLCK_SIZE_MIN, WAL_BLCK_SIZE_MAX,
 		NULL, NULL, NULL
 	},
 
@@ -2631,15 +2635,15 @@ static struct config_int ConfigureNamesInt[] =
 	},
 
 	{
-		{"wal_segment_size", PGC_INTERNAL, PRESET_OPTIONS,
+		{"wal_segment_size", PGC_POSTMASTER, PRESET_OPTIONS,
 			gettext_noop("Shows the number of pages per write ahead log segment."),
 			NULL,
 			GUC_UNIT_XBLOCKS | GUC_NOT_IN_SAMPLE | GUC_DISALLOW_IN_FILE
 		},
 		&wal_segment_size,
-		(XLOG_SEG_SIZE / XLOG_BLCKSZ),
-		(XLOG_SEG_SIZE / XLOG_BLCKSZ),
-		(XLOG_SEG_SIZE / XLOG_BLCKSZ),
+		WAL_FILE_SIZE_DEF_BLCK,
+		WAL_FILE_SIZE_MIN_BLCK,
+		WAL_FILE_SIZE_MAX_BLCK,
 		NULL, NULL, NULL
 	},
 
